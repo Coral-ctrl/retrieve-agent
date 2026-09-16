@@ -44,6 +44,6 @@ def load_settings(project_root: Path | None = None) -> Settings:
         logs_dir=root / os.getenv("RETRIEVE_LOGS_DIR", "logs"),
         database_url=os.getenv("DATABASE_URL") or None,
         voyage_api_key=os.getenv("VOYAGE_API_KEY") or None,
-        embedding_model=os.getenv("RETRIEVE_EMBEDDING_MODEL", "voyage-3-lite"),
+        embedding_model=os.getenv("RETRIEVE_EMBEDDING_MODEL", "voyage-4-lite"),
         dedup_threshold=float(os.getenv("RETRIEVE_DEDUP_THRESHOLD", "0.10")),
     )

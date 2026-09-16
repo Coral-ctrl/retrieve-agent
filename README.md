@@ -150,7 +150,9 @@ rating history to decide *when* a topic should come back.
 Add `VOYAGE_API_KEY` (from [Voyage AI](https://dashboard.voyageai.com),
 Anthropic's recommended embeddings partner -- Claude itself doesn't serve
 embeddings) and each topic is also embedded and checked against everything
-already saved, by meaning rather than by title text:
+already saved, by meaning rather than by title text. The default model,
+`voyage-4-lite`, includes 200M free tokens a month, which this project's
+notes won't come close to using -- so in practice, embeddings cost nothing:
 
 ```
 Synced to database: 3 new, 1 merged with existing topics

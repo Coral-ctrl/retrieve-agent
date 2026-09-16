@@ -13,17 +13,22 @@ from typing import Protocol
 
 from retrieve.schema import Topic
 
-# voyage-3-lite is cheap and its 512 dimensions keep the pgvector index
-# small. The topics.embedding column in migrations/001_init.sql is sized
-# for this model; switching models means changing both and re-embedding.
-DEFAULT_EMBEDDING_MODEL = "voyage-3-lite"
+# voyage-4-lite is Voyage's current small model: same price per token as the
+# older voyage-3-lite, but eligible for Voyage's 200M-free-tokens-a-month
+# tier (voyage-3-lite isn't -- Voyage limits free tokens to current-generation
+# models), which covers this project's usage many times over. It defaults to
+# 1024 dimensions but supports 256/512/1024/2048 via output_dimension, so we
+# ask for 512 explicitly to keep the pgvector index small -- the
+# topics.embedding column in migrations/001_init.sql is sized for that.
+# Changing EMBEDDING_DIMENSIONS means changing the column and re-embedding.
+DEFAULT_EMBEDDING_MODEL = "voyage-4-lite"
 EMBEDDING_DIMENSIONS = 512
 
 
 class EmbeddingClient(Protocol):
     """The one method we need from voyageai.Client()."""
 
-    def embed(self, texts: list[str], model: str, input_type: str) -> object: ...
+    def embed(self, texts: list[str], model: str, input_type: str, output_dimension: int) -> object: ...
 
 
 def topic_embedding_text(topic: Topic) -> str:
@@ -38,10 +43,17 @@ def topic_embedding_text(topic: Topic) -> str:
     ])
 
 
-def embed_topic(topic: Topic, client: EmbeddingClient, model: str = DEFAULT_EMBEDDING_MODEL) -> list[float]:
+def embed_topic(
+    topic: Topic,
+    client: EmbeddingClient,
+    model: str = DEFAULT_EMBEDDING_MODEL,
+    dimensions: int = EMBEDDING_DIMENSIONS,
+) -> list[float]:
     """Embed one topic. input_type='document' matches Voyage's asymmetric
     mode for the side being stored and searched, as opposed to 'query' for
     the side doing the searching (this project only ever searches with
     another topic's embedding, so every embedding here is a 'document')."""
-    result = client.embed([topic_embedding_text(topic)], model=model, input_type="document")
+    result = client.embed(
+        [topic_embedding_text(topic)], model=model, input_type="document", output_dimension=dimensions
+    )
     return list(result.embeddings[0])

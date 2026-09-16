@@ -29,8 +29,9 @@ CREATE TABLE IF NOT EXISTS topics (
     key_points   JSONB NOT NULL,
     tags         TEXT[] NOT NULL,
     difficulty   TEXT NOT NULL,
-    -- Dimension matches Voyage's voyage-3-lite model (see embeddings.py).
-    -- Changing embedding models means changing this column and re-embedding.
+    -- Dimension matches EMBEDDING_DIMENSIONS in embeddings.py (voyage-4-lite,
+    -- asked to output 512 dims instead of its 1024 default). Changing that
+    -- means changing this column too, and re-embedding everything.
     embedding    VECTOR(512) NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -50,8 +50,11 @@ class FakeEmbeddingClient:
         self.vectors_by_text = vectors_by_text
         self.received_calls: list[dict[str, Any]] = []
 
-    def embed(self, texts: list[str], model: str, input_type: str) -> SimpleNamespace:
-        self.received_calls.append({"texts": list(texts), "model": model, "input_type": input_type})
+    def embed(self, texts: list[str], model: str, input_type: str, output_dimension: int = 512) -> SimpleNamespace:
+        self.received_calls.append({
+            "texts": list(texts), "model": model, "input_type": input_type,
+            "output_dimension": output_dimension,
+        })
         try:
             embeddings = [self.vectors_by_text[text] for text in texts]
         except KeyError as missing_text:
