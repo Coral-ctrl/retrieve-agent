@@ -3,3 +3,9 @@ pdfplumber>=0.11,<1
 python-pptx>=1.0,<2
 pydantic>=2.13,<3
 python-dotenv>=1.2,<2
+
+# Phase 2: database sync (optional at runtime -- summarize skips syncing if
+# DATABASE_URL isn't set -- but installed by default so init-db always works)
+psycopg[binary]>=3.2,<4
+pgvector>=0.3,<1
+voyageai>=0.3,<1

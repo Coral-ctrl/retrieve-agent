@@ -25,6 +25,10 @@ class Settings:
     max_turns: int
     knowledge_dir: Path  # where distilled notes are written
     logs_dir: Path  # where agent run logs are written
+    database_url: str | None  # Postgres/Neon connection string; DB sync is skipped if unset
+    voyage_api_key: str | None  # needed to embed topics for de-duplication
+    embedding_model: str
+    dedup_threshold: float  # cosine distance below which two topics are treated as one
 
 
 def load_settings(project_root: Path | None = None) -> Settings:
@@ -38,4 +42,8 @@ def load_settings(project_root: Path | None = None) -> Settings:
         max_turns=int(os.getenv("RETRIEVE_MAX_TURNS", DEFAULT_MAX_TURNS)),
         knowledge_dir=root / os.getenv("RETRIEVE_KNOWLEDGE_DIR", "knowledge"),
         logs_dir=root / os.getenv("RETRIEVE_LOGS_DIR", "logs"),
+        database_url=os.getenv("DATABASE_URL") or None,
+        voyage_api_key=os.getenv("VOYAGE_API_KEY") or None,
+        embedding_model=os.getenv("RETRIEVE_EMBEDDING_MODEL", "voyage-3-lite"),
+        dedup_threshold=float(os.getenv("RETRIEVE_DEDUP_THRESHOLD", "0.10")),
     )
