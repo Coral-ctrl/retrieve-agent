@@ -62,3 +62,107 @@ def test_full_run_writes_notes(monkeypatch, tmp_path, sample_pdf, capsys) -> Non
     assert "1 topic saved" in output
     assert (tmp_path / "knowledge" / "networking-week-1" / "tcp-vs-udp.md").exists()
     assert list((tmp_path / "logs").glob("*.jsonl"))
+    assert "DATABASE_URL not set - topics saved to files only" in output
+
+
+def _scripted_messages() -> FakeMessagesClient:
+    return FakeMessagesClient([
+        fake_response(tool_use_block("t1", "read_pages", {"start_page": 1, "end_page": 2})),
+        fake_response(tool_use_block("t2", "save_topic", {
+            "title": "TCP vs UDP",
+            "summary": "TCP is reliable and ordered, while UDP trades reliability for speed.",
+            "key_points": ["TCP: reliable, ordered", "UDP: faster, unreliable"],
+            "tags": ["networking", "transport-layer"],
+            "difficulty": "intro",
+            "source_pages": [2],
+        })),
+        fake_response(tool_use_block("t3", "finish", {"note": "Short source."})),
+    ])
+
+
+def test_no_db_flag_skips_sync_even_with_database_url_set(monkeypatch, tmp_path, sample_pdf, capsys) -> None:
+    monkeypatch.setattr(anthropic, "Anthropic",
+                        lambda api_key: SimpleNamespace(messages=_scripted_messages()))
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/wouldnt-actually-connect")
+    called = []
+    monkeypatch.setattr(cli, "sync_to_database", lambda digest, settings: called.append(digest))
+
+    exit_code = run_cli(monkeypatch, tmp_path, ["summarize", str(sample_pdf), "--no-db"])
+
+    assert exit_code == 0
+    assert called == []
+    assert "DATABASE_URL not set" not in capsys.readouterr().out
+
+
+def test_database_url_set_triggers_sync(monkeypatch, tmp_path, sample_pdf, capsys) -> None:
+    monkeypatch.setattr(anthropic, "Anthropic",
+                        lambda api_key: SimpleNamespace(messages=_scripted_messages()))
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/wouldnt-actually-connect")
+    called = []
+    monkeypatch.setattr(cli, "sync_to_database", lambda digest, settings: called.append(digest))
+
+    exit_code = run_cli(monkeypatch, tmp_path, ["summarize", str(sample_pdf)])
+
+    assert exit_code == 0
+    assert len(called) == 1
+    assert called[0].topics[0].title == "TCP vs UDP"
+
+
+def test_database_commands_without_database_url_are_explained(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    (tmp_path / "knowledge" / "x").mkdir(parents=True)
+    (tmp_path / "knowledge" / "x" / "digest.json").write_text("{}")
+
+    for argv in (["init-db"], ["review"], ["import-knowledge"]):
+        assert cli.main(argv) == 1
+        assert "DATABASE_URL is not set" in capsys.readouterr().err
+
+
+def test_import_knowledge_with_nothing_to_import_is_explained(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    exit_code = cli.main(["import-knowledge"])
+
+    assert exit_code == 1
+    assert "No digest.json files found" in capsys.readouterr().err
+
+
+def test_import_knowledge_syncs_each_digest_once(monkeypatch, tmp_path, sample_pdf, capsys) -> None:
+    """Runs summarize (files only), then imports the resulting digest into a
+    fake repository, then imports again to check it's skipped."""
+    from tests.fakes import FakeRepository
+
+    monkeypatch.setattr(anthropic, "Anthropic",
+                        lambda api_key: SimpleNamespace(messages=_scripted_messages()))
+    assert run_cli(monkeypatch, tmp_path, ["summarize", str(sample_pdf), "--course", "Networking"]) == 0
+    capsys.readouterr()
+
+    repository = FakeRepository()
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/fake")
+    monkeypatch.setattr(cli, "_open_database", lambda settings: _FakeConnection())
+    monkeypatch.setattr("retrieve.db.Repository", lambda conn: repository)
+
+    assert cli.main(["import-knowledge"]) == 0
+    first_output = capsys.readouterr().out
+    assert "networking-week-1.pdf: 1 new, 0 merged" in first_output
+    assert "Imported 1 digest(s), skipped 0" in first_output
+    assert "No VOYAGE_API_KEY" in first_output
+    assert repository.topics[1]["embedding"] is None
+
+    assert cli.main(["import-knowledge"]) == 0
+    assert "Imported 0 digest(s), skipped 1" in capsys.readouterr().out
+    assert len(repository.topics) == 1
+
+
+class _FakeConnection:
+    """Enough of a psycopg connection for the CLI's `with conn:` blocks."""
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def close(self):
+        pass

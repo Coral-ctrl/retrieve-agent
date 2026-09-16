@@ -44,6 +44,14 @@ class Topic(BaseModel):
         return sorted(set(pages))
 
 
+class Rating(str, Enum):
+    """How well you recalled a topic when it came up for review."""
+
+    SOLID = "solid"  # explained it fully without looking
+    SHAKY = "shaky"  # got the gist, missed details or order
+    FORGOTTEN = "forgotten"  # couldn't recall it
+
+
 class StudyDigest(BaseModel):
     """Everything the agent distilled from one source file."""
 
@@ -53,3 +61,32 @@ class StudyDigest(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     topics: list[Topic]
     agent_note: str | None = None  # the agent's own closing remark, e.g. gaps it noticed
+
+
+class TopicSource(BaseModel):
+    """Where a stored topic was seen: one source file and the pages in it."""
+
+    file_name: str
+    course: str | None
+    pages: list[int]
+
+
+class StoredTopic(BaseModel):
+    """A topic as read back from the database, with its review history
+    summarised. This is what the review screen shows and what the queue is
+    ordered by."""
+
+    id: int
+    title: str
+    summary: str
+    key_points: list[str]
+    tags: list[str]
+    difficulty: Difficulty
+    sources: list[TopicSource]
+    review_count: int = 0
+    last_rating: Rating | None = None
+    last_reviewed_at: datetime | None = None
+
+    @property
+    def courses(self) -> list[str]:
+        return list(dict.fromkeys(s.course for s in self.sources if s.course))
