@@ -151,8 +151,10 @@ Add `VOYAGE_API_KEY` (from [Voyage AI](https://dashboard.voyageai.com),
 Anthropic's recommended embeddings partner -- Claude itself doesn't serve
 embeddings) and each topic is also embedded and checked against everything
 already saved, by meaning rather than by title text. The default model,
-`voyage-4-lite`, includes 200M free tokens a month, which this project's
-notes won't come close to using -- so in practice, embeddings cost nothing:
+`voyage-4-lite`, comes with a one-time allowance of 200M free tokens per
+account. A topic is a few hundred tokens, so that is on the order of a
+million topics -- this project won't get near it, so in practice embeddings
+cost nothing:
 
 ```
 Synced to database: 3 new, 1 merged with existing topics
@@ -172,6 +174,14 @@ Without a Voyage key, topics are stored with no vector and matching falls
 back to exact title, which is enough to stop a re-run of the same file from
 doubling everything but won't catch the same idea worded differently. You
 can add the key later; only topics stored after that will have embeddings.
+
+A Voyage account with no payment method is limited to 3 requests a minute.
+That's fine here: a whole file's topics are embedded in **one** request, and
+the client retries with backoff if `import-knowledge` over many files does
+hit the limit. Adding a card lifts the limit and doesn't change the price
+(the free tokens still apply). Syncing is all-or-nothing per file -- if it
+fails for any reason, nothing is written, and re-running `summarize` on the
+same file is the recovery: it merges straight back into the existing rows.
 
 File output from Phase 1 is unaffected -- `knowledge/` is written the same
 way whether or not `DATABASE_URL` is set. Pass `--no-db` to skip syncing
@@ -194,7 +204,7 @@ retrieve/
 ├── config.py      # settings from .env
 └── cli.py         # command-line interface
 migrations/        # SQL schema, applied by `python -m retrieve init-db`
-tests/             # 59 tests; all but the Postgres integration tests run
+tests/             # 67 tests; all but the Postgres integration tests run
                     # fully offline, without an API key
 examples/          # sample notes to try the agent on
 ```

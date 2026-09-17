@@ -43,9 +43,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Create or update the database schema in DATABASE_URL.",
     )
 
-    subcommands.add_parser(
+    import_knowledge = subcommands.add_parser(
         "import-knowledge",
         help="Load every digest.json already in the knowledge folder into the database.",
+    )
+    import_knowledge.add_argument(
+        "--force", action="store_true",
+        help="Re-sync digests whose source is already in the database (e.g. after a "
+             "failed sync). Safe: existing topics are merged into, not duplicated.",
     )
 
     review = subcommands.add_parser("review", help="Recall, reveal and rate topics from the database.")
@@ -64,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init-db":
         return init_db_command(settings)
     if args.command == "import-knowledge":
-        return import_knowledge_command(settings)
+        return import_knowledge_command(settings, force=args.force)
     if args.command == "review":
         return review_command(args, settings)
     return 1
@@ -92,7 +97,11 @@ def _make_embedder(settings: Settings):
         return None
     import voyageai
 
-    return voyageai.Client(api_key=settings.voyage_api_key)
+    # The SDK retries rate-limit and transient errors with exponential
+    # backoff, but only if asked: the default is max_retries=0. An account
+    # with no payment method is capped at 3 requests/minute, which
+    # import-knowledge over several files would otherwise trip over.
+    return voyageai.Client(api_key=settings.voyage_api_key, max_retries=6)
 
 
 def init_db_command(settings: Settings) -> int:
@@ -108,8 +117,12 @@ def init_db_command(settings: Settings) -> int:
     return 0
 
 
-def import_knowledge_command(settings: Settings) -> int:
-    """Backfill: sync digests that were written before the database existed."""
+def import_knowledge_command(settings: Settings, force: bool = False) -> int:
+    """Backfill: sync digests that were written before the database existed.
+
+    Also the cheap way to repair a source that didn't fully sync: with
+    --force it re-syncs from the digest.json on disk, costing one embedding
+    request and no Claude call, instead of re-running summarize."""
     digest_paths = sorted(settings.knowledge_dir.glob("*/digest.json"))
     if not digest_paths:
         print(f"No digest.json files found under {settings.knowledge_dir}.", file=sys.stderr)
@@ -131,8 +144,8 @@ def import_knowledge_command(settings: Settings) -> int:
         repository = Repository(conn)
         for digest_path in digest_paths:
             digest = StudyDigest.model_validate_json(digest_path.read_text(encoding="utf-8"))
-            if repository.source_exists(digest.source_file, digest.course):
-                print(f"- {digest.source_file}: already imported, skipped")
+            if not force and repository.source_exists(digest.source_file, digest.course):
+                print(f"- {digest.source_file}: already imported, skipped (use --force to re-sync)")
                 skipped += 1
                 continue
             results = sync_digest(

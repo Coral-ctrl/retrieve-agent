@@ -30,8 +30,16 @@ MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
 def connect(database_url: str) -> psycopg.Connection:
     """Open a connection with the pgvector type adapter registered, so
-    Python lists can be passed and read back as VECTOR columns directly."""
+    Python lists can be passed and read back as VECTOR columns directly.
+
+    The extension is enabled here, before the adapter is registered, because
+    register_vector looks the `vector` type up in the catalog and fails on a
+    database that doesn't have it yet -- which is exactly the state a fresh
+    Neon project is in when `init-db` first connects. CREATE EXTENSION IF NOT
+    EXISTS is a no-op once it's there, so this is safe on every connect.
+    """
     conn = psycopg.connect(database_url, autocommit=True)
+    conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
     register_vector(conn)
     return conn
 
@@ -56,6 +64,13 @@ class Repository:
 
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
+
+    def transaction(self):
+        """All-or-nothing scope for a group of writes. sync.py wraps a whole
+        digest in one, so a failure part-way leaves no half-saved source.
+        Works whether the connection is in autocommit mode (the normal case)
+        or already inside a transaction (the tests' rollback fixture)."""
+        return self._conn.transaction()
 
     # --- sources ----------------------------------------------------------
 

@@ -4,6 +4,8 @@ API key. tests/test_db_integration.py separately proves the real Repository
 implements the same contract against real Postgres + pgvector.
 """
 
+import pytest
+
 from retrieve.schema import Difficulty, StudyDigest, Topic
 from retrieve.sync import format_sync_report, sync_digest
 from tests.fakes import FakeEmbeddingClient, FakeRepository
@@ -116,6 +118,41 @@ def test_re_running_the_same_source_reuses_its_source_row() -> None:
 
     assert len(repository.sources) == 1
     assert len(repository.topics) == 1
+
+
+def test_a_whole_digest_is_embedded_in_a_single_request() -> None:
+    topics = [_topic("TCP three-way handshake"), _topic("TCP reliability"), _topic("TCP vs UDP")]
+    embedder = FakeEmbeddingClient({
+        _embed_text(topics[0]): [1.0, 0.0, 0.0],
+        _embed_text(topics[1]): [0.0, 1.0, 0.0],
+        _embed_text(topics[2]): [0.0, 0.0, 1.0],
+    })
+    repository = FakeRepository()
+
+    results = sync_digest(_digest(topics), repository, embedder)
+
+    assert len(embedder.received_calls) == 1  # a 3-RPM free-tier account survives this
+    assert [r.status for r in results] == ["new", "new", "new"]
+    assert len(repository.topics) == 3
+
+
+def test_an_embedding_failure_writes_nothing_at_all() -> None:
+    """The failure mode seen on a Voyage account with no card: a rate-limit
+    error. Embedding happens before any write, so the repository must be
+    left exactly as it was -- no source row, no partial set of topics."""
+
+    class RateLimitedEmbedder:
+        def embed(self, texts, model, input_type, output_dimension):
+            raise RuntimeError("rate limited: 3 RPM")
+
+    repository = FakeRepository()
+
+    with pytest.raises(RuntimeError, match="rate limited"):
+        sync_digest(_digest([_topic("One"), _topic("Two")]), repository, RateLimitedEmbedder())
+
+    assert repository.sources == {}
+    assert repository.topics == {}
+    assert repository.topic_sources == {}
 
 
 def test_format_sync_report_summarises_new_and_merged_counts() -> None:

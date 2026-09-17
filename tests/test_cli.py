@@ -154,6 +154,15 @@ def test_import_knowledge_syncs_each_digest_once(monkeypatch, tmp_path, sample_p
     assert "Imported 0 digest(s), skipped 1" in capsys.readouterr().out
     assert len(repository.topics) == 1
 
+    # --force re-syncs an already-imported source without duplicating anything:
+    # the cheap repair path after a failed sync, since it needs no Claude call.
+    assert cli.main(["import-knowledge", "--force"]) == 0
+    forced_output = capsys.readouterr().out
+    assert "networking-week-1.pdf: 0 new, 1 merged" in forced_output
+    assert "Imported 1 digest(s), skipped 0" in forced_output
+    assert len(repository.topics) == 1
+    assert len(repository.sources) == 1
+
 
 class _FakeConnection:
     """Enough of a psycopg connection for the CLI's `with conn:` blocks."""

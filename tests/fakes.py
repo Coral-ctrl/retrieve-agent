@@ -76,6 +76,10 @@ class FakeRepository:
         self._next_source_id = 1
         self._next_topic_id = 1
 
+    def transaction(self):
+        from contextlib import nullcontext
+        return nullcontext()
+
     def get_or_create_source(self, file_name, course, model, agent_note) -> int:
         for source_id, source in self.sources.items():
             if source["file_name"] == file_name and source["course"] == course:

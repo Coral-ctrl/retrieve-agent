@@ -14,13 +14,16 @@ from typing import Protocol
 from retrieve.schema import Topic
 
 # voyage-4-lite is Voyage's current small model: same price per token as the
-# older voyage-3-lite, but eligible for Voyage's 200M-free-tokens-a-month
-# tier (voyage-3-lite isn't -- Voyage limits free tokens to current-generation
-# models), which covers this project's usage many times over. It defaults to
-# 1024 dimensions but supports 256/512/1024/2048 via output_dimension, so we
-# ask for 512 explicitly to keep the pgvector index small -- the
-# topics.embedding column in migrations/001_init.sql is sized for that.
-# Changing EMBEDDING_DIMENSIONS means changing the column and re-embedding.
+# older voyage-3-lite, but eligible for Voyage's one-time 200M free tokens
+# per account (voyage-3-lite isn't -- Voyage limits free tokens to
+# current-generation models). A topic is a few hundred tokens, so that
+# allowance is on the order of a million topics; this project won't dent it.
+#
+# It defaults to 1024 dimensions but supports 256/512/1024/2048 via
+# output_dimension, so we ask for 512 explicitly to keep the pgvector index
+# small -- the topics.embedding column in migrations/001_init.sql is sized
+# for that. Changing EMBEDDING_DIMENSIONS means changing the column and
+# re-embedding.
 DEFAULT_EMBEDDING_MODEL = "voyage-4-lite"
 EMBEDDING_DIMENSIONS = 512
 
@@ -43,17 +46,40 @@ def topic_embedding_text(topic: Topic) -> str:
     ])
 
 
+def embed_topics(
+    topics: list[Topic],
+    client: EmbeddingClient,
+    model: str = DEFAULT_EMBEDDING_MODEL,
+    dimensions: int = EMBEDDING_DIMENSIONS,
+) -> list[list[float]]:
+    """Embed every topic in ONE request, returning vectors in the same order.
+
+    One request per digest rather than one per topic matters more than it
+    looks: a Voyage account with no payment method is limited to 3 requests
+    a minute, so embedding a six-topic file one topic at a time fails
+    halfway through. Batched, a whole file is a single request.
+
+    input_type='document' matches Voyage's asymmetric mode for the side
+    being stored and searched, as opposed to 'query' for the side doing the
+    searching (this project only ever searches with another topic's
+    embedding, so every embedding here is a 'document').
+    """
+    if not topics:
+        return []
+    result = client.embed(
+        [topic_embedding_text(topic) for topic in topics],
+        model=model,
+        input_type="document",
+        output_dimension=dimensions,
+    )
+    return [list(vector) for vector in result.embeddings]
+
+
 def embed_topic(
     topic: Topic,
     client: EmbeddingClient,
     model: str = DEFAULT_EMBEDDING_MODEL,
     dimensions: int = EMBEDDING_DIMENSIONS,
 ) -> list[float]:
-    """Embed one topic. input_type='document' matches Voyage's asymmetric
-    mode for the side being stored and searched, as opposed to 'query' for
-    the side doing the searching (this project only ever searches with
-    another topic's embedding, so every embedding here is a 'document')."""
-    result = client.embed(
-        [topic_embedding_text(topic)], model=model, input_type="document", output_dimension=dimensions
-    )
-    return list(result.embeddings[0])
+    """Embed a single topic. Prefer embed_topics for more than one."""
+    return embed_topics([topic], client, model=model, dimensions=dimensions)[0]

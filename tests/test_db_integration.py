@@ -36,12 +36,13 @@ def repo():
         pytest.skip(f"No reachable test database at {TEST_DATABASE_URL}: {error}")
 
     init_schema(conn)
-    # Each test runs inside a transaction that's rolled back afterwards, so
-    # tests don't need to clean up after themselves or interfere with each
-    # other. autocommit is on for init_schema (DDL) but off inside the test.
-    conn.autocommit = False
-    yield Repository(conn)
-    conn.rollback()
+    # Each test runs inside an outer transaction that is always rolled back,
+    # so tests don't need to clean up after themselves or interfere with
+    # each other. Because the fixture owns the OUTER transaction, any
+    # Repository.transaction() a test (or sync.py) opens becomes a savepoint
+    # inside it rather than a real commit.
+    with conn.transaction(force_rollback=True):
+        yield Repository(conn)
     conn.close()
 
 
@@ -117,6 +118,76 @@ def test_source_count_for_topic_counts_distinct_linked_sources(repo) -> None:
     repo.link_source(topic_id, source_two, [9])
 
     assert repo.source_count_for_topic(topic_id) == 2
+
+
+def test_init_db_works_on_a_fresh_database_without_the_extension() -> None:
+    """The shared retrieve_test database already has pgvector enabled, which
+    hid a real bug: connect() registered the vector adapter before anything
+    had created the type, so `init-db` failed on a brand-new Neon project.
+    This creates a genuinely empty database and runs the full path on it."""
+    fresh_name = "retrieve_test_fresh"
+    maintenance_url = TEST_DATABASE_URL.rsplit("/", 1)[0] + "/postgres"
+    try:
+        admin = psycopg.connect(maintenance_url, autocommit=True)
+    except psycopg.OperationalError as error:
+        pytest.skip(f"No reachable test server at {maintenance_url}: {error}")
+
+    admin.execute(f"DROP DATABASE IF EXISTS {fresh_name}")
+    try:
+        admin.execute(f"CREATE DATABASE {fresh_name}")
+    except psycopg.errors.InsufficientPrivilege:
+        pytest.skip("Test role can't create databases")
+
+    try:
+        fresh_url = TEST_DATABASE_URL.rsplit("/", 1)[0] + f"/{fresh_name}"
+        conn = connect(fresh_url)  # this is the call that used to fail
+        init_schema(conn)
+        assert Repository(conn).list_topics() == []
+        conn.close()
+    finally:
+        admin.execute(f"DROP DATABASE IF EXISTS {fresh_name}")
+        admin.close()
+
+
+def test_transaction_rolls_back_everything_on_failure(repo) -> None:
+    """A database error part-way through a sync must not leave a source row
+    with only some of its topics. Only real Postgres can prove the rollback."""
+    with pytest.raises(RuntimeError, match="boom"):
+        with repo.transaction():
+            source_id = repo.get_or_create_source("week-1.pdf", "Networking", "claude-sonnet-5", None)
+            topic_id = repo.insert_topic(_topic(), _vector(1.0))
+            repo.link_source(topic_id, source_id, [2])
+            raise RuntimeError("boom")
+
+    assert not repo.source_exists("week-1.pdf", "Networking")
+    assert repo.list_topics() == []
+
+
+def test_sync_digest_against_real_postgres_is_atomic_and_idempotent(repo) -> None:
+    """End to end through sync.py: a fake embedder, the real Repository.
+    Re-running the same digest merges every topic back into the rows it
+    created the first time -- which is also the recovery path after a
+    failed sync: just run summarize again."""
+    from retrieve.schema import StudyDigest
+    from retrieve.sync import sync_digest
+    from tests.fakes import FakeEmbeddingClient
+    from retrieve.embeddings import topic_embedding_text
+
+    topics = [_topic("TCP three-way handshake"), _topic("TCP vs UDP")]
+    embedder = FakeEmbeddingClient({
+        topic_embedding_text(topics[0]): _vector(1.0),
+        topic_embedding_text(topics[1]): [0.0, 1.0] + [0.0] * 510,
+    })
+    digest = StudyDigest(source_file="week-1.pdf", course="Networking",
+                         model="claude-sonnet-5", topics=topics)
+
+    first = sync_digest(digest, repo, embedder)
+    second = sync_digest(digest, repo, embedder)
+
+    assert [r.status for r in first] == ["new", "new"]
+    assert [r.status for r in second] == ["merged", "merged"]
+    assert len(repo.list_topics()) == 2
+    assert all(r.source_count == 1 for r in second)  # same source, not a second row
 
 
 # --- Phase 3 -----------------------------------------------------------------
