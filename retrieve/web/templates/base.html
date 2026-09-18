@@ -4,19 +4,32 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Retrieve{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="/">Retrieve</a>
-    <nav>
-      <a href="/" {% if request.url.path == '/' %}class="active"{% endif %}>Dashboard</a>
-      <a href="/review{% if course %}?course={{ course }}{% endif %}" {% if request.url.path.startswith('/review') %}class="active"{% endif %}>Review</a>
-      <a href="/ask{% if course %}?course={{ course }}{% endif %}" {% if request.url.path.startswith('/ask') %}class="active"{% endif %}>Ask</a>
-      <a href="/new" {% if request.url.path.startswith('/new') %}class="active"{% endif %}>New material</a>
-    </nav>
+    {# Decorative Memphis confetti -- ornamental only, hidden from assistive tech. #}
+    <span class="deco deco-dot" aria-hidden="true"></span>
+    <span class="deco deco-tri" aria-hidden="true"></span>
+    <span class="deco deco-ring" aria-hidden="true"></span>
+    <span class="deco deco-plus" aria-hidden="true">+</span>
+
+    <div class="top-row">
+      <a class="brand" href="/">RETRIEVE</a>
+      <nav>
+        <a href="/" {% if request.url.path == '/' %}class="active"{% endif %}>Dashboard</a>
+        <a href="/review{% if course %}?course={{ course }}{% endif %}" {% if request.url.path.startswith('/review') %}class="active"{% endif %}>Review</a>
+        <a href="/ask{% if course %}?course={{ course }}{% endif %}" {% if request.url.path.startswith('/ask') %}class="active"{% endif %}>Ask</a>
+        <a href="/new" {% if request.url.path.startswith('/new') %}class="active"{% endif %}>New material</a>
+      </nav>
+    </div>
+    {# Bottom-left status line; each page fills it in (dashboard: due count + streak). #}
+    <div class="top-status">{% block header_status %}{% endblock %}</div>
   </header>
-  <main>
+  <main class="{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
 </body>

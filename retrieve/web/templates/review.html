@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Retrieve — Review{% endblock %}
+{% block header_status %}{{ remaining }} to review{% if all %} (including upcoming){% endif %}{% endblock %}
 {% block content %}
 
 {% if request.query_params.get("rated") %}
