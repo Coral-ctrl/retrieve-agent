@@ -24,7 +24,7 @@ def test_missing_api_key_is_explained(monkeypatch, tmp_path, capsys) -> None:
     exit_code = run_cli(monkeypatch, tmp_path, ["summarize", str(notes)], api_key=None)
 
     assert exit_code == 1
-    assert "ANTHROPIC_API_KEY is not set" in capsys.readouterr().err
+    assert "ANTHROPIC_API_KEY is not set" in capsys.readouterr().err  # RETRIEVE_BACKEND=api in tests
 
 
 def test_unsupported_file_is_explained(monkeypatch, tmp_path, capsys) -> None:
@@ -274,3 +274,37 @@ def test_ask_with_no_matching_notes_says_so_without_calling_claude(monkeypatch, 
 
     assert cli.main(["ask", "quantum entanglement", "--course", "Networking"]) == 0
     assert "No notes in course 'Networking' match" in capsys.readouterr().out
+
+
+def test_summarize_on_the_subscription_backend_uses_the_sdk_runner(monkeypatch, tmp_path, sample_pdf, capsys) -> None:
+    """RETRIEVE_BACKEND=subscription routes summarize through sdk_agent.run_agent_sdk
+    (stubbed here) and never builds an Anthropic client."""
+    from retrieve.agent import AgentResult
+    from retrieve.schema import Difficulty, Topic
+
+    seen = {}
+
+    def fake_run_agent_sdk(*, workspace, model, max_turns, logger, source_name, course, oauth_token=None, **_):
+        seen.update(model=model, source=source_name, course=course, token=oauth_token, pages=workspace.page_count)
+        return AgentResult(
+            topics=[Topic(title="TCP vs UDP", summary="TCP is reliable and ordered; UDP is faster but unreliable.",
+                          key_points=["TCP: reliable"], tags=["networking"], difficulty=Difficulty.INTRO,
+                          source_pages=[2])],
+            finished=True, finish_note=None, turns_used=3, end_reason="finished")
+
+    monkeypatch.setattr("retrieve.sdk_agent.run_agent_sdk", fake_run_agent_sdk)
+    monkeypatch.setattr("retrieve.sdk_agent.sdk_available", lambda: True)
+    monkeypatch.setattr(anthropic, "Anthropic",
+                        lambda api_key: (_ for _ in ()).throw(AssertionError("must not build an API client")))
+    monkeypatch.setenv("RETRIEVE_BACKEND", "subscription")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-test")
+
+    exit_code = run_cli(monkeypatch, tmp_path, ["summarize", str(sample_pdf), "--course", "Networking"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "via Claude subscription (API key as backup)" in output
+    assert "covered by your subscription" in output
+    assert seen == {"model": "claude-sonnet-5", "source": "networking-week-1.pdf", "course": "Networking",
+                    "token": "sk-ant-oat01-test", "pages": 2}
+    assert (tmp_path / "knowledge" / "networking-week-1" / "digest.json").exists()

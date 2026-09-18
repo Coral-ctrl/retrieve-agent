@@ -3,24 +3,29 @@ orchestration shared by `retrieve summarize` (CLI) and the web app's "New
 material" page.
 
 Reading the file and talking to Claude happen first; only once topics come
-back is anything written. Database sync is a separate, optional step the
-caller does afterwards (sync.sync_digest), since a CLI run and a web request
-open the database connection differently.
+back is anything written. Which loop talks to Claude -- the hand-written
+one on an API key, or the Claude Agent SDK on a subscription -- is the
+caller's choice, passed in as `agent_runner` (see retrieve.backends).
+
+Database sync is a separate, optional step the caller does afterwards
+(sync.sync_digest), since a CLI run and a web request open the database
+connection differently.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from retrieve.agent import MessagesClient, run_agent
 from retrieve.extract import extract_pages
 from retrieve.run_log import RunLogger
 from retrieve.schema import StudyDigest
 from retrieve.storage import save_digest, slugify
 from retrieve.tools import DocumentWorkspace
 
-DEFAULT_MAX_TURNS = 20
+if TYPE_CHECKING:
+    from retrieve.backends import AgentRunner
 
 
 class SummarizeError(ValueError):
@@ -45,15 +50,17 @@ def summarize_file(
     course: str | None,
     model: str,
     max_turns: int,
-    messages_client: MessagesClient,
+    agent_runner: AgentRunner,
     logs_dir: Path,
     knowledge_dir: Path,
 ) -> SummarizeResult:
     """Read `file_path`, distill it with Claude, and save the digest under
-    `knowledge_dir`. Raises FileNotFoundError or UnsupportedFileError (from
+    `knowledge_dir`. `agent_runner` is whichever loop the backend provides
+    (retrieve.backends): the hand-written one on the API, or the SDK one on
+    a subscription. Raises FileNotFoundError or UnsupportedFileError (from
     extract_pages) for problems reading the file, SummarizeError if there's
-    nothing to work with, and whatever the Claude client raises on API
-    errors -- callers decide how to present each of those."""
+    nothing to work with, and whatever the runner raises on model errors --
+    callers decide how to present each of those."""
     pages = extract_pages(file_path)
     readable_pages = [page for page in pages if not page.is_empty]
     if not readable_pages:
@@ -63,9 +70,8 @@ def summarize_file(
 
     logger = RunLogger(logs_dir, run_label=slugify(Path(original_name).stem))
     workspace = DocumentWorkspace(pages=pages)
-    result = run_agent(
+    result = agent_runner(
         workspace=workspace,
-        messages_client=messages_client,
         model=model,
         max_turns=max_turns,
         logger=logger,

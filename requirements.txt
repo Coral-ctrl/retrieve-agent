@@ -1,4 +1,8 @@
 anthropic>=1.6,<2
+# Subscription backend: drives the same tools through the Claude Agent SDK,
+# paid for by a Claude Pro/Max plan. Bundles the Claude Code binary, so
+# there's nothing else to install. Optional at runtime (RETRIEVE_BACKEND=api).
+claude-agent-sdk>=0.1.70,<1
 pdfplumber>=0.11,<1
 python-pptx>=1.0,<2
 pydantic>=2.13,<3

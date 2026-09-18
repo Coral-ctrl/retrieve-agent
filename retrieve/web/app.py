@@ -63,7 +63,8 @@ class WebDeps:
 
     open_repository: Callable[[], Any]  # returns a context manager yielding a Repository
     embedder: Any | None  # Voyage client, or None for keyword search
-    messages_client: Any | None  # anthropic client's .messages, or None if no API key
+    messages_client: Any | None  # Backend.messages_client (ask), or None if Claude is unreachable
+    agent_runner: Any | None  # Backend.agent_runner (new material), or None likewise
     model: str
     embedding_model: str
     logs_dir: Path
@@ -171,8 +172,12 @@ def create_app(deps: WebDeps) -> FastAPI:
                 embedding_model=deps.embedding_model,
             )
         logger = RunLogger(deps.logs_dir, run_label="ask")
-        answer = answer_question(question, retrieved, deps.messages_client, deps.model, logger,
-                                 used_vector_search=used_vector)
+        try:
+            answer = answer_question(question, retrieved, deps.messages_client, deps.model, logger,
+                                     used_vector_search=used_vector)
+        except Exception as model_error:  # noqa: BLE001 - API error, or subscription path with no backup
+            return render(request, "ask.html", course=course, question=question, answer=None,
+                          can_answer=True, error=f"Claude error: {model_error}")
         return render(request, "ask.html", course=course, question=question, answer=answer,
                       can_answer=True, cost=logger.estimated_cost_usd(deps.model))
 
@@ -182,13 +187,13 @@ def create_app(deps: WebDeps) -> FastAPI:
     def new_page(request: Request):
         return render(
             request, "new.html",
-            can_summarize=deps.messages_client is not None,
+            can_summarize=deps.agent_runner is not None,
             suffixes=", ".join(sorted(SUPPORTED_SUFFIXES)),
         )
 
     @app.post("/new", response_class=HTMLResponse)
     def new_submit(request: Request, file: UploadFile, course: str = Form("")):
-        if deps.messages_client is None:
+        if deps.agent_runner is None:
             return render(request, "new.html", can_summarize=False,
                           suffixes=", ".join(sorted(SUPPORTED_SUFFIXES)))
 
@@ -202,7 +207,7 @@ def create_app(deps: WebDeps) -> FastAPI:
                 result = summarize_file(
                     Path(tmp.name), original_name=original_name, course=course or None,
                     model=deps.model, max_turns=deps.max_turns,
-                    messages_client=deps.messages_client, logs_dir=deps.logs_dir,
+                    agent_runner=deps.agent_runner, logs_dir=deps.logs_dir,
                     knowledge_dir=deps.knowledge_dir,
                 )
             except UnsupportedFileError as error:
@@ -211,9 +216,9 @@ def create_app(deps: WebDeps) -> FastAPI:
             except SummarizeError as error:
                 return render(request, "new.html", can_summarize=True, error=str(error),
                               suffixes=", ".join(sorted(SUPPORTED_SUFFIXES)))
-            except Exception as api_error:  # noqa: BLE001 - surface any Claude API error plainly
+            except Exception as model_error:  # noqa: BLE001 - surface any Claude error plainly
                 return render(request, "new.html", can_summarize=True,
-                              error=f"Claude API error: {api_error}",
+                              error=f"Claude error: {model_error}",
                               suffixes=", ".join(sorted(SUPPORTED_SUFFIXES)))
 
         sync_report = None

@@ -9,6 +9,7 @@ Usage:
     python -m retrieve stats
     python -m retrieve ask "how does slow start work?"   # answered from your notes
     python -m retrieve serve                             # the same, in your browser
+    python -m retrieve setup-token                       # sign in with a Claude subscription
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from retrieve.backends import make_backend
 from retrieve.config import Settings, load_settings
 from retrieve.extract import SUPPORTED_SUFFIXES, UnsupportedFileError
 from retrieve.run_log import RunLogger
@@ -71,6 +73,11 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--top-k", type=int, default=5, help="How many notes to give the model (default 5).")
     ask.add_argument("--model", help="Override the model set in .env.")
 
+    subcommands.add_parser(
+        "setup-token",
+        help="Sign in with your Claude subscription: prints a token to put in .env as CLAUDE_CODE_OAUTH_TOKEN.",
+    )
+
     serve = subcommands.add_parser("serve", help="Open the dashboard, review and ask pages in your browser.")
     serve.add_argument("--port", type=int, default=8000)
     serve.add_argument("--no-browser", action="store_true", help="Don't open a browser tab automatically.")
@@ -95,7 +102,33 @@ def main(argv: list[str] | None = None) -> int:
         return ask_command(args, settings)
     if args.command == "serve":
         return serve_command(args, settings)
+    if args.command == "setup-token":
+        return setup_token_command()
     return 1
+
+
+def setup_token_command() -> int:
+    """Run Claude Code's `setup-token` (from the binary bundled with the
+    SDK, so nothing else needs installing). It opens a browser to sign in
+    with your Claude account and prints a long-lived token."""
+    import subprocess
+
+    from retrieve.sdk_agent import bundled_cli_path
+
+    cli = bundled_cli_path()
+    if cli is None:
+        print("Neither claude-agent-sdk nor a `claude` command is installed. "
+              "Run: pip install claude-agent-sdk", file=sys.stderr)
+        return 1
+    print("Signing in with your Claude subscription. When the token is printed, "
+          "copy it into .env as CLAUDE_CODE_OAUTH_TOKEN=...\n")
+    return subprocess.call([cli, "setup-token"])
+
+
+def _notice(message: str) -> None:
+    """Backend notices (e.g. falling back to the API key) go to stderr so
+    they never mix into piped output."""
+    print(message, file=sys.stderr)
 
 
 def _open_database(settings: Settings):
@@ -214,15 +247,12 @@ def stats_command(args: argparse.Namespace, settings: Settings) -> int:
 
 
 def ask_command(args: argparse.Namespace, settings: Settings) -> int:
-    if not settings.anthropic_api_key:
-        print("ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key.",
-              file=sys.stderr)
+    backend = make_backend(settings, notify=_notice)
+    if backend is None:
         return 1
     conn = _open_database(settings)
     if conn is None:
         return 1
-
-    import anthropic
 
     from retrieve.ask import answer_question, format_answer, retrieve_topics
     from retrieve.db import Repository
@@ -249,15 +279,16 @@ def ask_command(args: argparse.Namespace, settings: Settings) -> int:
               "Try different wording, or `summarize` the material first.")
         return 0
 
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
     try:
-        answer = answer_question(args.question, retrieved, client.messages, model, logger,
+        answer = answer_question(args.question, retrieved, backend.messages_client, model, logger,
                                  used_vector_search=used_vector)
-    except anthropic.APIError as api_error:
-        print(f"Claude API error: {api_error}", file=sys.stderr)
+    except Exception as model_error:  # noqa: BLE001 - API error, or subscription path with no backup
+        print(f"Claude error: {model_error}", file=sys.stderr)
         return 1
 
     print(format_answer(answer, logger.estimated_cost_usd(model)))
+    if backend.name == "subscription":
+        print("(cost shown at API rates; covered by your Claude subscription)")
     return 0
 
 
@@ -285,17 +316,17 @@ def serve_command(args: argparse.Namespace, settings: Settings) -> int:
         finally:
             conn.close()
 
-    messages_client = None
-    if settings.anthropic_api_key:
-        import anthropic
-        messages_client = anthropic.Anthropic(api_key=settings.anthropic_api_key).messages
+    backend = make_backend(settings, notify=_notice)
+    if backend is None:
+        print("(The Ask and New material pages will be disabled.)")
     else:
-        print("(ANTHROPIC_API_KEY not set: the Ask page will be read-only.)")
+        print(f"Claude via {backend.describe}")
 
     app = create_app(WebDeps(
         open_repository=open_repository,
         embedder=_make_embedder(settings),
-        messages_client=messages_client,
+        messages_client=backend.messages_client if backend else None,
+        agent_runner=backend.agent_runner if backend else None,
         model=settings.model,
         embedding_model=settings.embedding_model,
         logs_dir=settings.logs_dir,
@@ -320,17 +351,11 @@ def summarize_command(args: argparse.Namespace, settings: Settings) -> int:
         print(f"File not found: {args.file}", file=sys.stderr)
         return 1
 
-    if not settings.anthropic_api_key:
-        print("ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key.",
-              file=sys.stderr)
+    backend = make_backend(settings, notify=_notice)
+    if backend is None:
         return 1
 
-    # Imported here so --help and the checks above work without the SDK configured.
-    import anthropic
-
-    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-
-    print(f"Reading {args.file.name} with {model}...")
+    print(f"Reading {args.file.name} with {model} via {backend.describe}...")
 
     try:
         result = summarize_file(
@@ -339,7 +364,7 @@ def summarize_command(args: argparse.Namespace, settings: Settings) -> int:
             course=args.course,
             model=model,
             max_turns=max_turns,
-            messages_client=client.messages,
+            agent_runner=backend.agent_runner,
             logs_dir=settings.logs_dir,
             knowledge_dir=settings.knowledge_dir,
         )
@@ -349,8 +374,8 @@ def summarize_command(args: argparse.Namespace, settings: Settings) -> int:
     except SummarizeError as error:
         print(error, file=sys.stderr)
         return 1
-    except anthropic.APIError as api_error:
-        print(f"Claude API error: {api_error}", file=sys.stderr)
+    except Exception as model_error:  # noqa: BLE001 - API error, or subscription path with no backup
+        print(f"Claude error: {model_error}", file=sys.stderr)
         return 1
 
     digest = result.digest
@@ -364,6 +389,8 @@ def summarize_command(args: argparse.Namespace, settings: Settings) -> int:
 
     cost = result.run_summary["estimated_cost_usd"]
     cost_text = f"~US${cost:.3f}" if cost is not None else "unknown cost"
+    if backend.name == "subscription":
+        cost_text += " at API rates, covered by your subscription"
     topic_count = len(digest.topics)
     topic_word = "topic" if topic_count == 1 else "topics"
     print(f"\n{topic_count} {topic_word} saved to {result.output_folder}")

@@ -5,12 +5,14 @@ tested functions and renders what they return; the study logic itself is
 covered in test_schedule.py, test_review.py, test_stats.py and test_ask.py.
 """
 
+import functools
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 
+from retrieve.agent import run_agent
 from retrieve.schema import Difficulty, Rating, ReviewEvent, StoredTopic, TopicSource
 from retrieve.web.app import WebDeps, create_app
 from tests.fakes import FakeMessagesClient, fake_response, text_block, tool_use_block
@@ -105,8 +107,12 @@ def make_client(topics, messages_client=None, tmp_path=None, database_available=
     def open_repository():
         yield repo
 
+    # The API backend's runner: the hand-written loop on the scripted client.
+    agent_runner = (functools.partial(run_agent, messages_client=messages_client)
+                    if messages_client is not None else None)
     app = create_app(WebDeps(
         open_repository=open_repository, embedder=None, messages_client=messages_client,
+        agent_runner=agent_runner,
         model="claude-haiku-4-5", embedding_model="voyage-4-lite",
         logs_dir=tmp_path, knowledge_dir=tmp_path, max_turns=10, dedup_threshold=0.10,
         database_available=database_available, now=lambda: NOW,
@@ -241,10 +247,10 @@ def test_ask_page_without_an_api_key_is_read_only(tmp_path) -> None:
     client, _ = make_client([_topic(1, "Congestion control")], messages_client=None, tmp_path=tmp_path)
 
     page = client.get("/ask").text
-    assert "ANTHROPIC_API_KEY isn't set" in page and "disabled" in page
+    assert "Claude isn't reachable" in page and "disabled" in page
 
     posted = client.post("/ask", data={"question": "anything", "course": ""}).text
-    assert "ANTHROPIC_API_KEY isn't set" in posted
+    assert "Claude isn't reachable" in posted
 
 
 TOPIC_INPUT = {
@@ -265,10 +271,10 @@ def test_new_page_is_disabled_without_an_api_key(tmp_path) -> None:
     client, _ = make_client([], messages_client=None, tmp_path=tmp_path)
 
     page = client.get("/new").text
-    assert "ANTHROPIC_API_KEY isn't set" in page and "disabled" in page
+    assert "Claude isn't reachable" in page and "disabled" in page
 
     posted = client.post("/new", data={"course": ""}, files=_upload_file()).text
-    assert "ANTHROPIC_API_KEY isn't set" in posted
+    assert "Claude isn't reachable" in posted
 
 
 def test_new_material_is_summarized_and_synced(tmp_path) -> None:
@@ -329,3 +335,15 @@ def test_ask_with_no_matching_notes_makes_no_model_call(tmp_path) -> None:
 
     assert "No notes found to answer from." in page
     assert messages.received_calls == []
+
+
+def test_ask_shows_a_claude_error_instead_of_crashing(tmp_path) -> None:
+    class Failing:
+        def create(self, **kwargs):
+            raise RuntimeError("Usage limit reached")
+
+    client, _ = make_client([_topic(1, "Congestion control")], messages_client=Failing(), tmp_path=tmp_path)
+
+    page = client.post("/ask", data={"question": "how does congestion control work", "course": ""}).text
+
+    assert "Claude error: Usage limit reached" in page

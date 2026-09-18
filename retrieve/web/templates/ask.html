@@ -6,8 +6,12 @@
   <h1>Ask your notes</h1>
   <p class="muted">Answered only from what you've studied. If your notes don't cover it, it says so.</p>
 
+  {% if error %}
+  <p class="warn">{{ error }}</p>
+  {% endif %}
+
   {% if not can_answer %}
-  <p class="warn">ANTHROPIC_API_KEY isn't set, so questions can't be answered. Add it to <code>.env</code> and restart <code>serve</code>.</p>
+  <p class="warn">Claude isn't reachable, so questions can't be answered. Sign in with <code>claude</code> (subscription) or add ANTHROPIC_API_KEY to <code>.env</code>, then restart <code>serve</code>.</p>
   {% endif %}
 
   <form method="post" action="/ask" class="ask-form">

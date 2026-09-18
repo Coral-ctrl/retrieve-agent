@@ -44,7 +44,10 @@ flowchart LR
 ```
 
 The agent loop is written by hand against the Claude API, with no agent
-framework, so every step is visible:
+framework, so every step is visible (there is also a second driver for the
+same tools, `sdk_agent.py`, that lets the run come out of a Claude
+subscription instead of an API key -- see
+[Subscription or API key?](#subscription-or-api-key)):
 
 1. Claude receives the task and four tool definitions.
 2. It decides what to do: look at the outline, read a page range, save a topic, or finish.
@@ -58,7 +61,10 @@ and tool call is logged with token counts and an estimated cost.
 
 ## Quick start
 
-Requires Python 3.10+ and an [Anthropic API key](https://platform.claude.com).
+Requires Python 3.10+ and one way to reach Claude -- see
+[Subscription or API key?](#subscription-or-api-key) below. The short
+version: a Claude Pro/Max subscription is enough, and an
+[Anthropic API key](https://platform.claude.com) is the optional backup.
 
 ```bash
 git clone https://github.com/<your-username>/retrieve.git
@@ -74,8 +80,41 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 
-cp .env.example .env               # then paste your API key into .env
+cp .env.example .env               # then follow the comments in .env
 ```
+
+### Subscription or API key?
+
+`summarize` and `ask` need Claude. There are two ways to pay for that, and
+`RETRIEVE_BACKEND` in `.env` picks one:
+
+| `RETRIEVE_BACKEND` | How it runs | What it costs |
+|---|---|---|
+| `subscription` (default) | The agent's tools are driven by the [Claude Agent SDK](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan), signed in with your Claude account | Comes out of your Pro/Max plan's monthly credit; nothing extra to buy |
+| `api` | Phase 1's hand-written loop on the Anthropic API | Pay per token on an API key |
+
+**To use the subscription** (the default), sign in once:
+
+```bash
+python -m retrieve setup-token     # opens a browser to sign in; prints a token
+```
+
+Put the token in `.env` as `CLAUDE_CODE_OAUTH_TOKEN=...`. That's it: the
+`claude-agent-sdk` package in `requirements.txt` bundles the Claude Code
+binary, so there is nothing else to install (no Node). If you've already
+signed in to Claude Code on this machine, you can skip the token and it
+uses that sign-in.
+
+**The API key is the backup.** With both configured, Retrieve uses the
+subscription and only falls back to the key -- printing a notice, because
+that is when metered billing starts -- if the subscription path can't run:
+the SDK isn't installed, you're not signed in, or your plan's usage limit
+for the period is hit. Nothing is saved until a run succeeds, so the retry
+is safe.
+
+Anthropic licenses the subscription route for individual use, which is
+exactly what this is: your own notes, on your own machine. A deployment
+other people use would need the API backend.
 
 ## Usage
 
@@ -91,7 +130,9 @@ python -m retrieve summarize materials/week-3-slides.pdf --model claude-haiku-4-
 ```
 
 The command prints each topic, then a run summary with turns, tool calls,
-corrected errors and estimated cost. Output is written to:
+corrected errors and estimated cost (on the subscription backend the cost
+is shown at API rates for comparison; you aren't billed it). Output is
+written to:
 
 ```
 knowledge/week-3-slides/
@@ -276,7 +317,10 @@ for one run without touching `.env`.
 
 ```
 retrieve/
-├── agent.py       # the agent loop and system prompt
+├── agent.py       # the agent loop and system prompt (API backend)
+├── sdk_agent.py   # the same tools driven by the Claude Agent SDK (subscription backend)
+├── backends.py    # picks subscription or API; falls back to the key with a notice
+├── summarize.py   # file -> agent -> digest on disk, shared by the CLI and the web app
 ├── tools.py       # tool definitions and what each tool does
 ├── schema.py      # Pydantic models for topics and digests
 ├── extract.py     # PDF / PPTX / Markdown -> text per page
@@ -291,13 +335,13 @@ retrieve/
 ├── ask.py         # RAG: nearest notes -> one grounded Claude call
 ├── config.py      # settings from .env
 ├── cli.py         # command-line interface
-└── web/           # FastAPI app: dashboard, review and ask pages
+└── web/           # FastAPI app: dashboard, review, ask and new-material pages
     ├── app.py     #   thin routes over the functions above
     ├── templates/ #   Jinja2, server-rendered
     └── static/    #   one stylesheet
 migrations/        # SQL schema, applied by `python -m retrieve init-db`
-tests/             # 112 tests; all but the Postgres integration tests run
-                    # fully offline, without an API key
+tests/             # 143 tests; all but the Postgres integration tests run
+                    # fully offline, without an API key or a sign-in
 examples/          # sample notes to try the agent on
 ```
 
@@ -330,6 +374,15 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
 - **A hand-written loop instead of a framework.** The loop is short and fully
   explainable, and the project exists to demonstrate agent design.
+- **...and a second driver for the same tools.** `sdk_agent.py` runs the
+  identical `DocumentWorkspace` tools through the Claude Agent SDK so a run
+  can be paid for by a Claude subscription. The tools, schema validation
+  and system prompt are shared; only the loop that drives them differs.
+  That the swap was a new module and no edits to `tools.py` is the point:
+  the tool layer never depended on which loop was calling it. The SDK's
+  loop is a black box next to the hand-written one, so its run log is
+  thinner (tool calls and totals, not every turn), which is why the
+  hand-written loop stays the reference implementation.
 - **Tools that return fixable errors.** Validation happens in the tools, and
   errors go back to the model instead of crashing the run. The agent corrects
   itself, and the log counts how often that happens.
@@ -381,7 +434,8 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 - [x] **Phase 3:** terminal review: recall from the title, reveal, rate it *solid / shaky / forgotten*
 - [x] **Phase 4:** spaced repetition (SM-2 style): ratings decide when each topic comes back; `stats`
 - [x] **Phase 5a:** Q&A over your own notes (RAG) with citations
-- [x] **Web app:** dashboard, review and ask pages (`serve`)
+- [x] **Web app:** dashboard, review, ask and new-material pages (`serve`)
+- [x] **Subscription backend:** run on a Claude Pro/Max plan, API key as the fallback
 - [ ] **Phase 5b:** generated practice questions, graded against the note
 - [ ] **Phase 5c:** interview-story practice from project write-ups
 - [ ] Evaluation set: hand-labelled slides to measure tagging accuracy

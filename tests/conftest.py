@@ -11,6 +11,16 @@ from reportlab.pdfgen import canvas
 from retrieve.extract import Page
 
 
+@pytest.fixture(autouse=True)
+def api_backend_by_default(monkeypatch) -> None:
+    """Tests that go through cli.py patch `anthropic.Anthropic`, i.e. they
+    test the hand-written loop on the API. Pin that backend so the default
+    (subscription) doesn't quietly route them to the Claude Agent SDK.
+    Subscription tests set RETRIEVE_BACKEND themselves."""
+    monkeypatch.setenv("RETRIEVE_BACKEND", "api")
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+
+
 @pytest.fixture
 def sample_pages() -> list[Page]:
     return [

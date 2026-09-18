@@ -4,14 +4,22 @@ checks the wiring around it (reading the file, saving the digest, the two
 error cases) with a fake Claude client, so no network or API key involved.
 """
 
+import functools
 from pathlib import Path
 
 import pytest
 
+from retrieve.agent import run_agent
 from retrieve.extract import UnsupportedFileError
 from retrieve.summarize import SummarizeError, summarize_file
 
 from fakes import FakeMessagesClient, fake_response, tool_use_block
+
+
+def runner(client: FakeMessagesClient):
+    """The hand-written loop bound to a scripted client -- what the API
+    backend hands to summarize_file."""
+    return functools.partial(run_agent, messages_client=client)
 
 READ_PAGE_1 = tool_use_block("t0", "read_pages", {"start_page": 1, "end_page": 1})
 
@@ -40,7 +48,7 @@ def test_summarize_file_saves_a_digest_from_a_successful_run(tmp_path) -> None:
 
     result = summarize_file(
         _notes_file(tmp_path), original_name="week-1.txt", course="Networking",
-        model="claude-sonnet-5", max_turns=10, messages_client=client,
+        model="claude-sonnet-5", max_turns=10, agent_runner=runner(client),
         logs_dir=tmp_path / "logs", knowledge_dir=tmp_path / "knowledge",
     )
 
@@ -61,7 +69,7 @@ def test_summarize_file_rejects_an_unsupported_extension(tmp_path) -> None:
     with pytest.raises(UnsupportedFileError):
         summarize_file(
             bad_file, original_name="slides.key", course=None, model="claude-sonnet-5",
-            max_turns=10, messages_client=FakeMessagesClient([]),
+            max_turns=10, agent_runner=runner(FakeMessagesClient([])),
             logs_dir=tmp_path / "logs", knowledge_dir=tmp_path / "knowledge",
         )
 
@@ -72,7 +80,7 @@ def test_summarize_file_raises_when_the_file_has_no_extractable_text(tmp_path) -
     with pytest.raises(SummarizeError, match="No text could be extracted"):
         summarize_file(
             empty_file, original_name="week-1.txt", course=None, model="claude-sonnet-5",
-            max_turns=10, messages_client=FakeMessagesClient([]),
+            max_turns=10, agent_runner=runner(FakeMessagesClient([])),
             logs_dir=tmp_path / "logs", knowledge_dir=tmp_path / "knowledge",
         )
 
@@ -88,6 +96,6 @@ def test_summarize_file_raises_when_the_agent_saves_nothing(tmp_path) -> None:
     with pytest.raises(SummarizeError, match="didn't save any topics"):
         summarize_file(
             _notes_file(tmp_path), original_name="week-1.txt", course=None,
-            model="claude-sonnet-5", max_turns=2, messages_client=client,
+            model="claude-sonnet-5", max_turns=2, agent_runner=runner(client),
             logs_dir=tmp_path / "logs", knowledge_dir=tmp_path / "knowledge",
         )
