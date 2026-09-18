@@ -8,6 +8,7 @@ Usage:
     python -m retrieve review --all                    # everything, e.g. before an interview
     python -m retrieve stats
     python -m retrieve ask "how does slow start work?"   # answered from your notes
+    python -m retrieve serve                             # the same, in your browser
 """
 
 from __future__ import annotations
@@ -16,13 +17,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from retrieve.agent import run_agent
 from retrieve.config import Settings, load_settings
-from retrieve.extract import SUPPORTED_SUFFIXES, UnsupportedFileError, extract_pages
+from retrieve.extract import SUPPORTED_SUFFIXES, UnsupportedFileError
 from retrieve.run_log import RunLogger
 from retrieve.schema import StudyDigest
-from retrieve.storage import save_digest, slugify
-from retrieve.tools import DocumentWorkspace
+from retrieve.summarize import SummarizeError, summarize_file
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,6 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("--course", help="Only search notes from this course.")
     ask.add_argument("--top-k", type=int, default=5, help="How many notes to give the model (default 5).")
     ask.add_argument("--model", help="Override the model set in .env.")
+
+    serve = subcommands.add_parser("serve", help="Open the dashboard, review and ask pages in your browser.")
+    serve.add_argument("--port", type=int, default=8000)
+    serve.add_argument("--no-browser", action="store_true", help="Don't open a browser tab automatically.")
     return parser
 
 
@@ -90,6 +93,8 @@ def main(argv: list[str] | None = None) -> int:
         return stats_command(args, settings)
     if args.command == "ask":
         return ask_command(args, settings)
+    if args.command == "serve":
+        return serve_command(args, settings)
     return 1
 
 
@@ -256,24 +261,63 @@ def ask_command(args: argparse.Namespace, settings: Settings) -> int:
     return 0
 
 
+def serve_command(args: argparse.Namespace, settings: Settings) -> int:
+    """Run the local web app. Every request opens its own short-lived
+    connection, so a Neon database that idles between uses just wakes up."""
+    if not settings.database_url:
+        print("DATABASE_URL is not set. Add it to .env first (see .env.example).", file=sys.stderr)
+        return 1
+
+    import contextlib
+    import threading
+    import webbrowser
+
+    import uvicorn
+
+    from retrieve.db import Repository, connect
+    from retrieve.web.app import WebDeps, create_app
+
+    @contextlib.contextmanager
+    def open_repository():
+        conn = connect(settings.database_url)
+        try:
+            yield Repository(conn)
+        finally:
+            conn.close()
+
+    messages_client = None
+    if settings.anthropic_api_key:
+        import anthropic
+        messages_client = anthropic.Anthropic(api_key=settings.anthropic_api_key).messages
+    else:
+        print("(ANTHROPIC_API_KEY not set: the Ask page will be read-only.)")
+
+    app = create_app(WebDeps(
+        open_repository=open_repository,
+        embedder=_make_embedder(settings),
+        messages_client=messages_client,
+        model=settings.model,
+        embedding_model=settings.embedding_model,
+        logs_dir=settings.logs_dir,
+        knowledge_dir=settings.knowledge_dir,
+        max_turns=settings.max_turns,
+        dedup_threshold=settings.dedup_threshold,
+    ))
+
+    url = f"http://127.0.0.1:{args.port}"
+    print(f"Retrieve is running at {url}  (Ctrl+C to stop)")
+    if not args.no_browser:
+        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    return 0
+
+
 def summarize_command(args: argparse.Namespace, settings: Settings) -> int:
     model = args.model or settings.model
     max_turns = args.max_turns or settings.max_turns
 
-    # --- Read the file before spending any tokens ------------------------
-    try:
-        pages = extract_pages(args.file)
-    except FileNotFoundError:
+    if not args.file.exists():
         print(f"File not found: {args.file}", file=sys.stderr)
-        return 1
-    except UnsupportedFileError as error:
-        print(error, file=sys.stderr)
-        return 1
-
-    readable_pages = [page for page in pages if not page.is_empty]
-    if not readable_pages:
-        print("No text could be extracted. If this is a scanned PDF, it needs OCR first.",
-              file=sys.stderr)
         return 1
 
     if not settings.anthropic_api_key:
@@ -285,40 +329,31 @@ def summarize_command(args: argparse.Namespace, settings: Settings) -> int:
     import anthropic
 
     client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
-    logger = RunLogger(settings.logs_dir, run_label=slugify(args.file.stem))
-    workspace = DocumentWorkspace(pages=pages)
 
-    print(f"Reading {args.file.name} ({len(pages)} pages, "
-          f"{len(pages) - len(readable_pages)} without text) with {model}...")
+    print(f"Reading {args.file.name} with {model}...")
 
     try:
-        result = run_agent(
-            workspace=workspace,
-            messages_client=client.messages,
+        result = summarize_file(
+            args.file,
+            original_name=args.file.name,
+            course=args.course,
             model=model,
             max_turns=max_turns,
-            logger=logger,
-            source_name=args.file.name,
-            course=args.course,
+            messages_client=client.messages,
+            logs_dir=settings.logs_dir,
+            knowledge_dir=settings.knowledge_dir,
         )
+    except UnsupportedFileError as error:
+        print(error, file=sys.stderr)
+        return 1
+    except SummarizeError as error:
+        print(error, file=sys.stderr)
+        return 1
     except anthropic.APIError as api_error:
         print(f"Claude API error: {api_error}", file=sys.stderr)
-        print(f"Run log: {logger.log_path}", file=sys.stderr)
         return 1
 
-    if not result.topics:
-        print("The agent didn't save any topics. Check the run log for details:",
-              logger.log_path, file=sys.stderr)
-        return 1
-
-    digest = StudyDigest(
-        source_file=args.file.name,
-        course=args.course,
-        model=model,
-        topics=result.topics,
-        agent_note=result.finish_note,
-    )
-    output_folder = save_digest(digest, settings.knowledge_dir)
+    digest = result.digest
     print_digest(digest)
 
     if settings.database_url and not args.no_db:
@@ -327,15 +362,14 @@ def summarize_command(args: argparse.Namespace, settings: Settings) -> int:
         print("\n(DATABASE_URL not set - topics saved to files only. "
               "See .env.example to enable database sync.)")
 
-    run_summary = logger.summary(model)
-    cost = run_summary["estimated_cost_usd"]
+    cost = result.run_summary["estimated_cost_usd"]
     cost_text = f"~US${cost:.3f}" if cost is not None else "unknown cost"
-    topic_count = len(result.topics)
+    topic_count = len(digest.topics)
     topic_word = "topic" if topic_count == 1 else "topics"
-    print(f"\n{topic_count} {topic_word} saved to {output_folder}")
-    print(f"{result.turns_used} turns, {run_summary['tool_calls']} tool calls "
-          f"({run_summary['tool_errors']} corrected), {cost_text}")
-    print(f"Run log: {logger.log_path}")
+    print(f"\n{topic_count} {topic_word} saved to {result.output_folder}")
+    print(f"{result.turns_used} turns, {result.run_summary['tool_calls']} tool calls "
+          f"({result.run_summary['tool_errors']} corrected), {cost_text}")
+    print(f"Run log: {result.log_path}")
 
     if not result.finished:
         print(f"\nWarning: stopped after {max_turns} turns before the agent finished. "

@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Retrieve — Review{% endblock %}
+{% block content %}
+
+{% if request.query_params.get("rated") %}
+<p class="flash">
+  Rated <strong>{{ request.query_params.get("rated") }}</strong>
+  — back in {{ request.query_params.get("days") }} day{{ "" if request.query_params.get("days") == "1" else "s" }}.
+</p>
+{% endif %}
+
+<section class="card review" id="card">
+  <p class="muted small">{{ remaining }} to review{% if all %} (including upcoming){% endif %} · {{ due }}</p>
+  <h1 class="topic-title">{{ topic.title }}</h1>
+  <p class="muted">
+    <span class="pill {{ topic.difficulty.value }}">{{ topic.difficulty.value }}</span>
+    {% if topic.courses %}{{ topic.courses|join(", ") }} · {% endif %}
+    {{ topic.sources|map(attribute="file_name")|join(", ") }}
+  </p>
+
+  <div id="reveal">
+    <p class="prompt">Explain it to yourself first. Then reveal.</p>
+    <button class="button primary" id="reveal-btn" onclick="revealTopic()">Reveal</button>
+  </div>
+</section>
+
+{# The rating form lives outside the swapped region so it exists before and after the reveal. #}
+<form id="rate-form" method="post" action="/review/{{ topic.id }}/rate" class="hidden">
+  <input type="hidden" name="course" value="{{ course }}">
+  <input type="hidden" name="all" value="{{ 'true' if all else 'false' }}">
+  <input type="hidden" name="rating" id="rating-field" value="">
+</form>
+
+<script>
+  // The reveal is fetched and swapped in, so the title stays exactly where it
+  // was -- the recall step and the answer are the same card.
+  let revealed = false;
+  async function revealTopic() {
+    const html = await (await fetch("/review/{{ topic.id }}/reveal")).text();
+    document.getElementById("reveal").innerHTML = html;
+    revealed = true;
+  }
+  function rateTopic(value) {
+    document.getElementById("rating-field").value = value;
+    document.getElementById("rate-form").submit();
+  }
+  // Keyboard shortcuts mirror the terminal: Enter/Space reveals, s/h/f rate.
+  document.addEventListener("keydown", function (e) {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+    if ((e.key === "Enter" || e.key === " ") && !revealed) { e.preventDefault(); revealTopic(); return; }
+    const map = { s: "solid", h: "shaky", f: "forgotten" };
+    if (revealed && map[e.key]) rateTopic(map[e.key]);
+  });
+</script>
+{% endblock %}

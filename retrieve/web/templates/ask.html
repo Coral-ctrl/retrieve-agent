@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Retrieve — Ask{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h1>Ask your notes</h1>
+  <p class="muted">Answered only from what you've studied. If your notes don't cover it, it says so.</p>
+
+  {% if not can_answer %}
+  <p class="warn">ANTHROPIC_API_KEY isn't set, so questions can't be answered. Add it to <code>.env</code> and restart <code>serve</code>.</p>
+  {% endif %}
+
+  <form method="post" action="/ask" class="ask-form">
+    <input type="hidden" name="course" value="{{ course }}">
+    <input type="text" name="question" placeholder="e.g. how does slow start work?"
+           value="{{ question or '' }}" autofocus required {% if not can_answer %}disabled{% endif %}>
+    <button class="button primary" type="submit" {% if not can_answer %}disabled{% endif %}>Ask</button>
+  </form>
+  {% if course %}<p class="muted small">Searching course: {{ course }}</p>{% endif %}
+</section>
+
+{% if answer %}
+<section class="card answer">
+  {% if answer.retrieved %}
+  <p class="muted small">
+    Found {{ answer.retrieved|length }} relevant note{{ "" if answer.retrieved|length == 1 else "s" }}
+    {{ "by meaning" if answer.used_vector_search else "by keyword (no VOYAGE_API_KEY)" }}
+  </p>
+  {% endif %}
+
+  <div class="answer-text">{{ answer.text }}</div>
+
+  {% if answer.retrieved %}
+  <h2>Sources</h2>
+  <ol class="sources">
+    {% for item in answer.retrieved %}
+    <li>
+      <strong>{{ item.topic.title }}</strong>
+      {% if item.distance is not none %}<span class="muted small">distance {{ "%.2f"|format(item.distance) }}</span>{% endif %}
+      <div class="muted small">
+        {% for s in item.topic.sources %}{{ s.file_name }} p.{{ s.pages|join(", ") }}{% if not loop.last %}; {% endif %}{% endfor %}
+      </div>
+    </li>
+    {% endfor %}
+  </ol>
+  <p class="muted small">
+    {{ answer.input_tokens }} input / {{ answer.output_tokens }} output tokens{% if cost is not none %}, ~US${{ "%.4f"|format(cost) }}{% endif %}
+  </p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

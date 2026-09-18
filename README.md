@@ -7,7 +7,8 @@ ones you're forgetting.
 > **Status:** Phase 5 in progress. Distill course material from the command
 > line, store topics in Postgres, review them on a spaced-repetition schedule
 > driven by your own ratings, and ask questions answered from your notes
-> alone. Practice questions are next on the [roadmap](#roadmap).
+> alone -- in the terminal or in a local web app. Practice questions are
+> next on the [roadmap](#roadmap).
 
 ## Why
 
@@ -38,6 +39,7 @@ flowchart LR
     J -- rating --> I
     I -- nearest notes --> L[ask.py<br/>grounded answer]
     L -- one Claude call --> L
+    K & J & L --> M[web/app.py<br/>same functions, in a browser]
     C -. every call .-> F[run_log.py<br/>JSONL run log]
 ```
 
@@ -169,6 +171,25 @@ Networking: 24 topic(s)
   reviews: 61 total, 4 today; streak 6 days
 ```
 
+### In the browser
+
+```bash
+python -m retrieve serve            # opens http://127.0.0.1:8000
+```
+
+The same three things -- dashboard, review, ask -- as pages. The dashboard
+shows what's due, what's new, your streak and every topic's status; the
+review page shows the title, reveals on click (or Enter), and rates with
+buttons or the same `s` / `h` / `f` keys as the terminal, previewing what
+each rating would do; the ask page shows the answer with its sources.
+
+It's a FastAPI app with server-rendered templates and a few lines of plain
+JavaScript -- no framework, no build step, nothing to install beyond
+`requirements.txt`. Every route is a thin adapter over the functions the
+CLI already uses, so there is no study logic in the web layer and the two
+interfaces can't drift apart. It runs on localhost for one person, so
+there's no login. The terminal commands keep working alongside it.
+
 ### Asking questions (Phase 5)
 
 ```bash
@@ -269,9 +290,13 @@ retrieve/
 ├── stats.py       # what's due, what's new, streak
 ├── ask.py         # RAG: nearest notes -> one grounded Claude call
 ├── config.py      # settings from .env
-└── cli.py         # command-line interface
+├── cli.py         # command-line interface
+└── web/           # FastAPI app: dashboard, review and ask pages
+    ├── app.py     #   thin routes over the functions above
+    ├── templates/ #   Jinja2, server-rendered
+    └── static/    #   one stylesheet
 migrations/        # SQL schema, applied by `python -m retrieve init-db`
-tests/             # 100 tests; all but the Postgres integration tests run
+tests/             # 112 tests; all but the Postgres integration tests run
                     # fully offline, without an API key
 examples/          # sample notes to try the agent on
 ```
@@ -326,6 +351,10 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
   what's due. No `due_at` column to keep in sync, no migration when the
   algorithm changes, and the whole history is there for a better policy
   later. At a few hundred topics the replay is instantaneous.
+- **The web app has no logic of its own.** Each route calls the same
+  function the CLI calls and renders the result, and is tested through
+  FastAPI's test client against a fake repository -- the same way the CLI
+  is tested. Adding the UI didn't add a second implementation of anything.
 - **`ask` may say "your notes don't cover this".** The prompt forbids
   outside knowledge and requires citations, so an answer reflects what you
   actually studied. Retrieval is one vector query; generation is one model
@@ -352,6 +381,7 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 - [x] **Phase 3:** terminal review: recall from the title, reveal, rate it *solid / shaky / forgotten*
 - [x] **Phase 4:** spaced repetition (SM-2 style): ratings decide when each topic comes back; `stats`
 - [x] **Phase 5a:** Q&A over your own notes (RAG) with citations
+- [x] **Web app:** dashboard, review and ask pages (`serve`)
 - [ ] **Phase 5b:** generated practice questions, graded against the note
 - [ ] **Phase 5c:** interview-story practice from project write-ups
 - [ ] Evaluation set: hand-labelled slides to measure tagging accuracy

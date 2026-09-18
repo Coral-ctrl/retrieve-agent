@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Retrieve — Dashboard{% endblock %}
+{% block content %}
+
+<section class="hero">
+  <div>
+    <h1>{{ course or "All courses" }}</h1>
+    <p class="muted">{{ stats.total }} topic{{ "" if stats.total == 1 else "s" }}</p>
+  </div>
+  {% if courses %}
+  <form method="get" class="inline">
+    <label>Course
+      <select name="course" onchange="this.form.submit()">
+        <option value="" {% if not course %}selected{% endif %}>All</option>
+        {% for c in courses %}
+        <option value="{{ c }}" {% if c == course %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
+  {% endif %}
+</section>
+
+{% if stats.total == 0 %}
+<p class="empty">Nothing here yet. <a href="/new">Add material</a>, or run <code>python -m retrieve summarize your-file.pdf --course "Name"</code> from the terminal.</p>
+{% else %}
+
+<section class="tiles">
+  <a class="tile {% if due_total %}accent{% endif %}" href="/review{% if course %}?course={{ course }}{% endif %}">
+    <span class="num">{{ due_total }}</span>
+    <span class="label">to review now</span>
+    <span class="sub">{{ stats.due_now }} due · {{ stats.new }} new</span>
+  </a>
+  <div class="tile">
+    <span class="num">{{ stats.upcoming }}</span>
+    <span class="label">scheduled later</span>
+    <span class="sub">{% if stats.next_due and not stats.due_now %}next {{ stats.next_due.strftime("%a %d %b") }}{% else %}&nbsp;{% endif %}</span>
+  </div>
+  <div class="tile">
+    <span class="num">{{ stats.streak_days }}</span>
+    <span class="label">day streak</span>
+    <span class="sub">{{ stats.reviews_today }} review{{ "" if stats.reviews_today == 1 else "s" }} today</span>
+  </div>
+  <div class="tile">
+    <span class="num">{{ stats.reviews_total }}</span>
+    <span class="label">reviews total</span>
+    <span class="sub">
+      <span class="dot solid"></span>{{ ratings.solid }}
+      <span class="dot shaky"></span>{{ ratings.shaky }}
+      <span class="dot forgotten"></span>{{ ratings.forgotten }}
+    </span>
+  </div>
+</section>
+
+<section class="two-col">
+  <div>
+    <h2>Up next</h2>
+    {% if due_titles %}
+    <ol class="queue">
+      {% for title in due_titles %}<li>{{ title }}</li>{% endfor %}
+    </ol>
+    {% if due_total > due_titles|length %}<p class="muted">…and {{ due_total - due_titles|length }} more</p>{% endif %}
+    <a class="button" href="/review{% if course %}?course={{ course }}{% endif %}">Start reviewing</a>
+    {% else %}
+    <p class="muted">Nothing due. <a href="/review?all=true{% if course %}&course={{ course }}{% endif %}">Review ahead of schedule</a></p>
+    {% endif %}
+  </div>
+  <div>
+    <h2>All topics</h2>
+    <table class="topics">
+      <thead><tr><th>Topic</th><th>Level</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for t in topics %}
+        <tr>
+          <td>{{ t.title }}<div class="muted small">{{ t.sources|map(attribute="file_name")|join(", ") }}</div></td>
+          <td><span class="pill {{ t.difficulty.value }}">{{ t.difficulty.value }}</span></td>
+          <td class="small">{{ due_text[t.id] }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

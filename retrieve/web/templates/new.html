@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}Retrieve — New material{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h1>Add new material</h1>
+  <p class="muted">
+    Upload a file and Claude reads it, distills it into study topics and saves
+    them{{ " to the database" if database_available is not defined or database_available else " to files" }}.
+    Supported: {{ suffixes }}. This can take a minute or two for a longer file.
+  </p>
+
+  {% if not can_summarize %}
+  <p class="warn">ANTHROPIC_API_KEY isn't set, so material can't be summarized. Add it to <code>.env</code> and restart <code>serve</code>. Uploading is disabled.</p>
+  {% endif %}
+
+  {% if error %}
+  <p class="warn">{{ error }}</p>
+  {% endif %}
+
+  <form method="post" action="/new" enctype="multipart/form-data" class="new-form" onsubmit="return startSummarizing(this)">
+    <input type="file" name="file" required {% if not can_summarize %}disabled{% endif %}>
+    <input type="text" name="course" placeholder="Course (optional)" value="{{ course or '' }}"
+           {% if not can_summarize %}disabled{% endif %}>
+    <button class="button primary" type="submit" {% if not can_summarize %}disabled{% endif %}>Summarize</button>
+  </form>
+  <p id="working" class="muted small hidden">Reading and summarizing -- this can take a minute or two...</p>
+</section>
+
+<script>
+function startSummarizing(form) {
+  form.querySelector("button").disabled = true;
+  document.getElementById("working").classList.remove("hidden");
+  return true;
+}
+</script>
+
+{% endblock %}

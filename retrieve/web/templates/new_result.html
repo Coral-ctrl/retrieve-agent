@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Retrieve — New material{% endblock %}
+{% block content %}
+
+<section class="card">
+  <h1>{{ digest.topics|length }} topic{{ "" if digest.topics|length == 1 else "s" }} from {{ digest.source_file }}</h1>
+  {% if digest.course %}<p class="muted small">Course: {{ digest.course }}</p>{% endif %}
+
+  {% if not finished %}
+  <p class="warn">Stopped before finishing -- some pages may be missing. Try again, or use a higher turn limit from the terminal.</p>
+  {% endif %}
+
+  {% if database_available %}
+    {% if sync_error %}
+    <p class="warn">Saved to <code>{{ output_folder }}</code>, but couldn't sync to the database: {{ sync_error }}. Run <code>import-knowledge --force</code> from the terminal to retry.</p>
+    {% elif sync_report %}
+    <p class="muted small">Synced to database: {{ sync_report }}</p>
+    {% endif %}
+  {% else %}
+  <p class="muted small">Saved to files only (not synced to the database).</p>
+  {% endif %}
+
+  {% if cost is not none %}<p class="muted small">~US${{ "%.3f"|format(cost) }}</p>{% endif %}
+</section>
+
+<section class="card">
+  {% for topic in digest.topics %}
+  <article {% if not loop.first %}style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line);"{% endif %}>
+    <h2 style="text-transform: none; letter-spacing: normal; font-size: 1.2rem; color: var(--text);">
+      {{ topic.title }} <span class="pill {{ topic.difficulty.value }}">{{ topic.difficulty.value }}</span>
+    </h2>
+    <p>{{ topic.summary }}</p>
+    <ul class="key-points">
+      {% for point in topic.key_points %}<li>{{ point }}</li>{% endfor %}
+    </ul>
+    <p class="muted small">tags: {{ topic.tags|join(", ") }} · pages: {{ topic.source_pages|join(", ") }}</p>
+  </article>
+  {% endfor %}
+</section>
+
+<p><a class="button" href="/new">Add another file</a> <a class="button primary" href="/">Back to dashboard</a></p>
+
+{% endblock %}

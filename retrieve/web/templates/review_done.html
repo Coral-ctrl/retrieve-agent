@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Retrieve — Review{% endblock %}
+{% block content %}
+
+{% if request.query_params.get("rated") %}
+<p class="flash">
+  Rated <strong>{{ request.query_params.get("rated") }}</strong>
+  — back in {{ request.query_params.get("days") }} day{{ "" if request.query_params.get("days") == "1" else "s" }}.
+</p>
+{% endif %}
+
+<section class="card center">
+  {% if total == 0 %}
+    <h1>Nothing to review yet</h1>
+    <p class="muted"><a href="/new">Add material</a>, or run <code>python -m retrieve summarize your-file.pdf --course "Name"</code> from the terminal.</p>
+  {% elif all %}
+    <h1>That's everything</h1>
+    <p class="muted">All {{ total }} topics reviewed.</p>
+  {% else %}
+    <h1>All caught up</h1>
+    <p class="muted">Nothing due right now — {{ total }} topic{{ "" if total == 1 else "s" }} scheduled for later.</p>
+    <a class="button" href="/review?all=true{% if course %}&course={{ course }}{% endif %}">Review ahead of schedule</a>
+  {% endif %}
+  <p><a href="/{% if course %}?course={{ course }}{% endif %}">Back to dashboard</a></p>
+</section>
+{% endblock %}

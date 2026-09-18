@@ -1,0 +1,14 @@
+<div class="revealed">
+  <p class="summary">{{ topic.summary }}</p>
+  <ul class="key-points">
+    {% for point in topic.key_points %}<li>{{ point }}</li>{% endfor %}
+  </ul>
+  {% if topic.tags %}<p class="muted small">tags: {{ topic.tags|join(", ") }}</p>{% endif %}
+</div>
+
+<p class="prompt">How did you do?</p>
+<div class="ratings">
+  <button class="button rate solid"     onclick="rateTopic('solid')"><span class="name">Solid<kbd>s</kbd></span><span class="sub">back in {{ preview.s }}d</span></button>
+  <button class="button rate shaky"     onclick="rateTopic('shaky')"><span class="name">Shaky<kbd>h</kbd></span><span class="sub">back in {{ preview.h }}d</span></button>
+  <button class="button rate forgotten" onclick="rateTopic('forgotten')"><span class="name">Forgotten<kbd>f</kbd></span><span class="sub">back in {{ preview.f }}d</span></button>
+</div>

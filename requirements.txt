@@ -9,3 +9,9 @@ python-dotenv>=1.2,<2
 psycopg[binary]>=3.2,<4
 pgvector>=0.3,<1
 voyageai>=0.3,<1
+
+# Phase 5: local web app (`python -m retrieve serve`)
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+jinja2>=3.1,<4
+python-multipart>=0.0.9,<1
