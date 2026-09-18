@@ -114,7 +114,7 @@ def test_database_commands_without_database_url_are_explained(monkeypatch, tmp_p
     (tmp_path / "knowledge" / "x").mkdir(parents=True)
     (tmp_path / "knowledge" / "x" / "digest.json").write_text("{}")
 
-    for argv in (["init-db"], ["review"], ["import-knowledge"]):
+    for argv in (["init-db"], ["review"], ["import-knowledge"], ["stats"]):
         assert cli.main(argv) == 1
         assert "DATABASE_URL is not set" in capsys.readouterr().err
 
@@ -175,3 +175,34 @@ class _FakeConnection:
 
     def close(self):
         pass
+
+
+def test_stats_command_prints_a_summary_from_the_repository(monkeypatch, tmp_path, capsys) -> None:
+    from datetime import datetime, timezone
+    from retrieve.schema import Difficulty, Rating, ReviewEvent, StoredTopic, TopicSource
+
+    class StubRepository:
+        def list_topics(self, course=None):
+            return [
+                StoredTopic(id=1, title="Fresh", summary="x" * 25, key_points=["k"], tags=["t"],
+                            difficulty=Difficulty.CORE,
+                            sources=[TopicSource(file_name="a.pdf", course="Networking", pages=[1])]),
+                StoredTopic(id=2, title="Rated", summary="x" * 25, key_points=["k"], tags=["t"],
+                            difficulty=Difficulty.CORE,
+                            sources=[TopicSource(file_name="a.pdf", course="Networking", pages=[2])],
+                            reviews=[ReviewEvent(rating=Rating.SOLID,
+                                                 reviewed_at=datetime.now(timezone.utc))]),
+            ]
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/fake")
+    monkeypatch.setattr(cli, "_open_database", lambda settings: _FakeConnection())
+    monkeypatch.setattr("retrieve.db.Repository", lambda conn: StubRepository())
+
+    assert cli.main(["stats", "--course", "Networking"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Networking: 2 topic(s)" in output
+    assert "due now: 0   new: 1   scheduled later: 1" in output
+    assert "last rating: 1 solid" in output
+    assert "1 today; streak 1 day" in output

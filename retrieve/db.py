@@ -23,7 +23,7 @@ import psycopg
 from pgvector import Vector
 from pgvector.psycopg import register_vector
 
-from retrieve.schema import Difficulty, Rating, StoredTopic, TopicSource
+from retrieve.schema import Difficulty, Rating, ReviewEvent, StoredTopic, TopicSource
 
 MIGRATIONS_DIR = Path(__file__).resolve().parent.parent / "migrations"
 
@@ -200,39 +200,40 @@ class Repository:
         )
 
     def list_topics(self, course: str | None = None) -> list[StoredTopic]:
-        """Every topic with its sources and a summary of its review history.
-        Ordering is deliberately not done here: review.py decides what comes
-        up next, so that policy can be unit-tested and, in Phase 4,
-        replaced without touching SQL.
+        """Every topic with its sources and its full review history, oldest
+        review first. Ordering is deliberately not done here: review.py and
+        schedule.py decide what comes up next, so that policy can be
+        unit-tested and changed without touching SQL.
 
         One person's notes are a few hundred topics at most, so loading them
-        all and sorting in Python is simpler than paging and fast enough.
+        all (history included) and working in Python is simpler than paging
+        and fast enough.
         """
         rows = self._conn.execute(
             """
             SELECT
                 t.id, t.title, t.summary, t.key_points, t.tags, t.difficulty,
-                COALESCE(
-                    json_agg(json_build_object(
+                COALESCE((
+                    SELECT json_agg(json_build_object(
                         'file_name', s.file_name, 'course', s.course, 'pages', ts.source_pages
-                    ) ORDER BY s.created_at) FILTER (WHERE s.id IS NOT NULL),
-                    '[]'
-                ) AS sources,
-                (SELECT count(*) FROM reviews r WHERE r.topic_id = t.id) AS review_count,
+                    ) ORDER BY s.created_at, s.id)
+                    FROM topic_sources ts JOIN sources s ON s.id = ts.source_id
+                    WHERE ts.topic_id = t.id
+                ), '[]') AS sources,
                 -- id breaks ties: now() is fixed for a whole transaction, so two
                 -- reviews in one transaction share a timestamp.
-                (SELECT r.rating FROM reviews r WHERE r.topic_id = t.id
-                 ORDER BY r.reviewed_at DESC, r.id DESC LIMIT 1) AS last_rating,
-                (SELECT max(r.reviewed_at) FROM reviews r WHERE r.topic_id = t.id) AS last_reviewed_at
+                COALESCE((
+                    SELECT json_agg(json_build_object(
+                        'rating', r.rating, 'reviewed_at', r.reviewed_at
+                    ) ORDER BY r.reviewed_at, r.id)
+                    FROM reviews r WHERE r.topic_id = t.id
+                ), '[]') AS reviews
             FROM topics t
-            LEFT JOIN topic_sources ts ON ts.topic_id = t.id
-            LEFT JOIN sources s ON s.id = ts.source_id
             WHERE %s::text IS NULL
                OR EXISTS (
                     SELECT 1 FROM topic_sources ts2 JOIN sources s2 ON s2.id = ts2.source_id
                     WHERE ts2.topic_id = t.id AND lower(s2.course) = lower(%s)
                )
-            GROUP BY t.id
             ORDER BY t.id
             """,
             (course, course),
@@ -247,9 +248,7 @@ class Repository:
                 tags=list(row[4]),
                 difficulty=Difficulty(row[5]),
                 sources=[TopicSource(**source) for source in row[6]],
-                review_count=row[7],
-                last_rating=Rating(row[8]) if row[8] else None,
-                last_reviewed_at=row[9],
+                reviews=[ReviewEvent(**event) for event in row[7]],
             )
             for row in rows
         ]

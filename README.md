@@ -4,9 +4,9 @@ An AI agent that reads your course slides, PDFs and notes, distills them into
 one-concept-per-note study topics, and (in later phases) quizzes you on the
 ones you're forgetting.
 
-> **Status:** Phase 3 of 5. Distill course material from the command line,
-> store topics in Postgres, and review them with recall-then-reveal ratings.
-> The smarter review policy and web app are on the [roadmap](#roadmap).
+> **Status:** Phase 4 of 5. Distill course material from the command line,
+> store topics in Postgres, and review them on a spaced-repetition schedule
+> driven by your own ratings. Q&A over your notes is on the [roadmap](#roadmap).
 
 ## Why
 
@@ -32,7 +32,8 @@ flowchart LR
     H -. with a Voyage key .-> G[embeddings.py]
     G --> H
     H --> I[(Postgres + pgvector<br/>topics, sources, reviews)]
-    I --> J[review.py<br/>recall, reveal, rate]
+    I --> K[schedule.py<br/>what's due?]
+    K --> J[review.py<br/>recall, reveal, rate]
     J -- rating --> I
     C -. every call .-> F[run_log.py<br/>JSONL run log]
 ```
@@ -98,7 +99,7 @@ logs/20260916-021500-week-3-slides.jsonl
 Each note has YAML frontmatter (source, pages, difficulty, tags, course), so
 the `knowledge/` folder also opens directly as an Obsidian vault.
 
-## The database (Phases 2 and 3)
+## The database (Phases 2 to 4)
 
 Set `DATABASE_URL` in `.env` (a free [Neon](https://neon.tech) Postgres
 project works; so does a local Postgres with the pgvector extension), then
@@ -115,11 +116,13 @@ and any digests you produced *before* setting this up can be backfilled:
 python -m retrieve import-knowledge
 ```
 
-### Reviewing (Phase 3)
+### Reviewing (Phases 3 and 4)
 
 ```bash
-python -m retrieve review                      # everything, 20 topics max
+python -m retrieve review                      # what's due today, 20 topics max
 python -m retrieve review --course Networking --limit 10
+python -m retrieve review --all                # everything, soonest due first (cramming)
+python -m retrieve stats                       # what's due, what's new, streak
 ```
 
 Each topic shows its **title first**. You try to explain the concept to
@@ -128,7 +131,7 @@ how it went: `s` solid, `h` shaky, `f` forgotten (`k` skips, `q` quits).
 
 ```
 [1/2] TCP three-way handshake
-    core | Networking | from week-1.pdf | not reviewed yet
+    core | Networking | from week-1.pdf | overdue by 2 days (last: shaky)
 Explain it to yourself, then press Enter to reveal (q to quit):
 
 TCP opens a connection with SYN, SYN-ACK, ACK before any data is sent.
@@ -136,14 +139,32 @@ TCP opens a connection with SYN, SYN-ACK, ACK before any data is sent.
   - SYN-ACK
   - ACK
 
-How did you do? [s/h/f, k=skip, q=quit]: f
+How did you do? [s/h/f, k=skip, q=quit]: s
+-> solid. Back in 3 days.
 ```
 
-Every rating is stored, so the queue changes: topics you've never seen come
-first, then ones you marked forgotten, then shaky, then solid, least
-recently reviewed first within each group. That's a deliberately simple
-rule for Phase 3; Phase 4 replaces it with a policy that uses the whole
-rating history to decide *when* a topic should come back.
+**When a topic comes back is decided by spaced repetition** (`schedule.py`,
+an adaptation of the SM-2 algorithm behind Anki): each time you rate a
+topic *solid* the gap before its next review grows -- 1 day, 3 days, then
+multiplied by a per-topic *ease* factor -- so well-known material fades
+into the background. *Shaky* repeats the current gap and lowers ease a
+little; *forgotten* drops the gap back to 1 day and lowers ease more. The
+`review` queue shows what's due (most overdue first), then new topics --
+the same order Anki uses, because a fading memory is more urgent than a
+fresh one.
+
+The schedule isn't stored anywhere. It's replayed from the append-only
+`reviews` log each time, so there are no extra columns to keep in sync and
+changing the rules later re-schedules everything consistently.
+
+`stats` shows where things stand:
+
+```
+Networking: 24 topic(s)
+  due now: 4   new: 2   scheduled later: 18
+  last rating: 15 solid, 5 shaky, 2 forgotten
+  reviews: 61 total, 4 today; streak 6 days
+```
 
 ### De-duplication across sources (Phase 2, needs a Voyage key)
 
@@ -180,8 +201,10 @@ That's fine here: a whole file's topics are embedded in **one** request, and
 the client retries with backoff if `import-knowledge` over many files does
 hit the limit. Adding a card lifts the limit and doesn't change the price
 (the free tokens still apply). Syncing is all-or-nothing per file -- if it
-fails for any reason, nothing is written, and re-running `summarize` on the
-same file is the recovery: it merges straight back into the existing rows.
+fails for any reason, nothing is written. To repair or retry, use
+`python -m retrieve import-knowledge --force`: it re-syncs from the
+`digest.json` already on disk, so it costs one embedding request and no
+Claude call, and merges straight back into any rows that did get saved.
 
 File output from Phase 1 is unaffected -- `knowledge/` is written the same
 way whether or not `DATABASE_URL` is set. Pass `--no-db` to skip syncing
@@ -200,11 +223,13 @@ retrieve/
 ├── embeddings.py  # topic -> vector, via Voyage AI
 ├── db.py          # Repository: Postgres/pgvector reads and writes
 ├── sync.py        # the de-duplication decision (new vs. merge)
-├── review.py      # queue order + the recall/reveal/rate session
+├── schedule.py    # spaced repetition: when is each topic due?
+├── review.py      # the due queue + the recall/reveal/rate session
+├── stats.py       # what's due, what's new, streak
 ├── config.py      # settings from .env
 └── cli.py         # command-line interface
 migrations/        # SQL schema, applied by `python -m retrieve init-db`
-tests/             # 67 tests; all but the Postgres integration tests run
+tests/             # 87 tests; all but the Postgres integration tests run
                     # fully offline, without an API key
 examples/          # sample notes to try the agent on
 ```
@@ -254,9 +279,15 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
   before it shows the summary, because reading an answer and recognising it
   is a different (weaker) skill from producing it. The rating is of the
   attempt, not of whether the note looked familiar.
-- **The queue policy is one swappable function.** `order_for_review` is
-  simple in Phase 3 and isolated so Phase 4 can replace it with a
-  history-aware policy without touching the session or the SQL.
+- **The schedule is derived, not stored.** The `reviews` table is an
+  append-only log of what happened; `schedule.py` replays it to work out
+  what's due. No `due_at` column to keep in sync, no migration when the
+  algorithm changes, and the whole history is there for a better policy
+  later. At a few hundred topics the replay is instantaneous.
+- **Spaced repetition, not a fixed timetable.** A topic you keep getting
+  right comes back less and less often; one you keep forgetting comes back
+  tomorrow. That's what makes the review load stay small as the number of
+  topics grows.
 - **De-duplicate by meaning, not by title string.** Course material repeats
   itself across weeks with different wording ("the TCP handshake" vs. "TCP's
   three-way handshake"). Matching on embeddings catches that; matching on
@@ -273,7 +304,7 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 - [x] **Phase 1:** distillation agent (CLI), structured topics, run logging, tests
 - [x] **Phase 2:** Postgres + pgvector storage (Neon), de-duplication across sources
 - [x] **Phase 3:** terminal review: recall from the title, reveal, rate it *solid / shaky / forgotten*
-- [ ] **Phase 4:** the review policy: ratings decide what gets resurfaced and when
+- [x] **Phase 4:** spaced repetition (SM-2 style): ratings decide when each topic comes back; `stats`
 - [ ] **Phase 5:** Q&A over your own notes (RAG), generated practice questions,
       interview-story practice from project write-ups
 - [ ] Evaluation set: hand-labelled slides to measure tagging accuracy

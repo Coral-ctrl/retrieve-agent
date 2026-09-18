@@ -4,7 +4,9 @@ Usage:
     python -m retrieve summarize path/to/slides.pdf --course "Networking"
     python -m retrieve init-db
     python -m retrieve import-knowledge      # backfill existing digests into the DB
-    python -m retrieve review --course "Networking"
+    python -m retrieve review --course "Networking"   # what's due today
+    python -m retrieve review --all                    # everything, e.g. before an interview
+    python -m retrieve stats
 """
 
 from __future__ import annotations
@@ -53,10 +55,15 @@ def build_parser() -> argparse.ArgumentParser:
              "failed sync). Safe: existing topics are merged into, not duplicated.",
     )
 
-    review = subcommands.add_parser("review", help="Recall, reveal and rate topics from the database.")
+    review = subcommands.add_parser("review", help="Recall, reveal and rate the topics that are due.")
     review.add_argument("--course", help="Only review topics from this course.")
     review.add_argument("--limit", type=int, default=20,
                         help="Maximum topics in this session (default 20).")
+    review.add_argument("--all", action="store_true",
+                        help="Include topics not due yet, soonest first (cramming mode).")
+
+    stats = subcommands.add_parser("stats", help="What's due, what's new, and how reviewing is going.")
+    stats.add_argument("--course", help="Only count topics from this course.")
     return parser
 
 
@@ -72,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
         return import_knowledge_command(settings, force=args.force)
     if args.command == "review":
         return review_command(args, settings)
+    if args.command == "stats":
+        return stats_command(args, settings)
     return 1
 
 
@@ -170,8 +179,23 @@ def review_command(args: argparse.Namespace, settings: Settings) -> int:
 
     with conn:
         repository = Repository(conn)
-        queue = order_for_review(repository.list_topics(course=args.course))[: args.limit]
-        ReviewSession(queue, repository, TerminalConsole()).run()
+        topics = repository.list_topics(course=args.course)
+        queue = order_for_review(topics, include_upcoming=args.all)[: args.limit]
+        ReviewSession(queue, repository, TerminalConsole(), total_topics=len(topics)).run()
+    return 0
+
+
+def stats_command(args: argparse.Namespace, settings: Settings) -> int:
+    conn = _open_database(settings)
+    if conn is None:
+        return 1
+
+    from retrieve.db import Repository
+    from retrieve.stats import compute_stats, format_stats
+
+    with conn:
+        topics = Repository(conn).list_topics(course=args.course)
+    print(format_stats(compute_stats(topics), course=args.course))
     return 0
 
 

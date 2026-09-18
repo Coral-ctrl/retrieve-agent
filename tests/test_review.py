@@ -8,14 +8,21 @@ path (rate, skip, quit, typo) is checked exactly and offline.
 from datetime import datetime, timedelta, timezone
 
 from retrieve.review import ReviewSession, order_for_review
-from retrieve.schema import Difficulty, Rating, StoredTopic, TopicSource
+from retrieve.schema import Difficulty, Rating, ReviewEvent, StoredTopic, TopicSource
 from tests.fakes import FakeRepository
 
 NOW = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)
 
 
-def _stored(topic_id: int, title: str, last_rating: Rating | None = None,
-            reviewed_days_ago: int | None = None) -> StoredTopic:
+def _stored(topic_id: int, title: str, *ratings: Rating,
+            last_review_days_ago: int = 1) -> StoredTopic:
+    """A topic with the given rating history, one review per day, the last of
+    them `last_review_days_ago` days before NOW."""
+    last_at = NOW - timedelta(days=last_review_days_ago)
+    reviews = [
+        ReviewEvent(rating=r, reviewed_at=last_at - timedelta(days=len(ratings) - 1 - i))
+        for i, r in enumerate(ratings)
+    ]
     return StoredTopic(
         id=topic_id,
         title=title,
@@ -24,9 +31,7 @@ def _stored(topic_id: int, title: str, last_rating: Rating | None = None,
         tags=["networking"],
         difficulty=Difficulty.CORE,
         sources=[TopicSource(file_name="week-1.pdf", course="Networking", pages=[2])],
-        review_count=0 if last_rating is None else 1,
-        last_rating=last_rating,
-        last_reviewed_at=NOW - timedelta(days=reviewed_days_ago) if reviewed_days_ago is not None else None,
+        reviews=reviews,
     )
 
 
@@ -50,27 +55,49 @@ class ScriptedConsole:
 
 
 # --- queue order ----------------------------------------------------------
+#
+# Intervals from schedule.py: one solid -> due 1 day after; two solids -> 3
+# days after; forgotten -> 1 day after. `last_review_days_ago` positions that
+# due date relative to NOW.
 
-def test_never_reviewed_topics_come_first_then_forgotten_then_shaky_then_solid() -> None:
+def test_only_due_and_new_topics_are_queued_by_default() -> None:
     topics = [
-        _stored(1, "Solid one", Rating.SOLID, reviewed_days_ago=1),
-        _stored(2, "Shaky one", Rating.SHAKY, reviewed_days_ago=1),
-        _stored(3, "Forgotten one", Rating.FORGOTTEN, reviewed_days_ago=1),
-        _stored(4, "New one"),
+        _stored(1, "Due: forgotten yesterday", Rating.FORGOTTEN, last_review_days_ago=1),
+        _stored(2, "Not due: two solids, reviewed yesterday", Rating.SOLID, Rating.SOLID, last_review_days_ago=1),
+        _stored(3, "New, never reviewed"),
     ]
 
-    ordered = [t.title for t in order_for_review(topics)]
+    queue = [t.title for t in order_for_review(topics, now=NOW)]
 
-    assert ordered == ["New one", "Forgotten one", "Shaky one", "Solid one"]
+    assert queue == ["Due: forgotten yesterday", "New, never reviewed"]
 
 
-def test_within_a_rating_the_least_recently_reviewed_comes_first() -> None:
+def test_due_topics_come_before_new_ones_most_overdue_first() -> None:
     topics = [
-        _stored(1, "Seen yesterday", Rating.SHAKY, reviewed_days_ago=1),
-        _stored(2, "Seen last month", Rating.SHAKY, reviewed_days_ago=30),
+        _stored(1, "New one"),
+        _stored(2, "Overdue by 1 day", Rating.SOLID, last_review_days_ago=2),
+        _stored(3, "Overdue by 4 days", Rating.SOLID, last_review_days_ago=5),
+        _stored(4, "Due today", Rating.SOLID, last_review_days_ago=1),
     ]
 
-    assert [t.title for t in order_for_review(topics)] == ["Seen last month", "Seen yesterday"]
+    queue = [t.title for t in order_for_review(topics, now=NOW)]
+
+    assert queue == ["Overdue by 4 days", "Overdue by 1 day", "Due today", "New one"]
+
+
+def test_include_upcoming_appends_not_yet_due_topics_soonest_first() -> None:
+    topics = [
+        _stored(1, "Due in 2 days", Rating.SOLID, Rating.SOLID, last_review_days_ago=1),
+        _stored(2, "Due in 7 days", Rating.SOLID, Rating.SOLID, Rating.SOLID, last_review_days_ago=1),
+        _stored(3, "New one"),
+        _stored(4, "Due today", Rating.SOLID, last_review_days_ago=1),
+    ]
+
+    default = [t.title for t in order_for_review(topics, now=NOW)]
+    everything = [t.title for t in order_for_review(topics, now=NOW, include_upcoming=True)]
+
+    assert default == ["Due today", "New one"]
+    assert everything == ["Due today", "New one", "Due in 2 days", "Due in 7 days"]
 
 
 # --- session --------------------------------------------------------------
@@ -143,10 +170,44 @@ def test_empty_queue_explains_itself() -> None:
     assert "Nothing to review yet" in console.transcript
 
 
-def test_context_line_shows_course_source_and_last_rating() -> None:
-    console = ScriptedConsole(["", "s"])
-    topic = _stored(1, "One", Rating.SHAKY, reviewed_days_ago=3)
+def test_context_line_shows_course_source_and_due_status() -> None:
+    console = ScriptedConsole(["", "s", "", "s", "", "s"])
+    topics = [
+        _stored(1, "Overdue", Rating.SHAKY, last_review_days_ago=3),  # 1-day gap, 3 days ago
+        _stored(2, "Fresh"),
+        _stored(3, "Ahead", Rating.SOLID, Rating.SOLID, last_review_days_ago=1),  # due in 2 days
+    ]
 
-    ReviewSession([topic], FakeRepository(), console).run()
+    ReviewSession(topics, FakeRepository(), console, now=NOW).run()
 
-    assert "core | Networking | from week-1.pdf | last time: shaky" in console.transcript
+    transcript = console.transcript
+    assert "core | Networking | from week-1.pdf | overdue by 2 days (last: shaky)" in transcript
+    assert "core | Networking | from week-1.pdf | new" in transcript
+    assert "core | Networking | from week-1.pdf | due in 2 days (last: solid)" in transcript
+
+
+def test_each_rating_reports_when_the_topic_comes_back() -> None:
+    console = ScriptedConsole(["", "s", "", "f", "", "h"])
+    topics = [
+        _stored(1, "First solid", ),  # new -> first solid = 1 day
+        _stored(2, "Forgotten", Rating.SOLID, Rating.SOLID, Rating.SOLID),  # -> back to 1 day
+        _stored(3, "Shaky", Rating.SOLID, Rating.SOLID),  # repeats the 3-day interval
+    ]
+
+    ReviewSession(topics, FakeRepository(), console, now=NOW).run()
+
+    transcript = console.transcript
+    assert "-> solid. Back in 1 day." in transcript
+    assert "-> forgotten. Back in 1 day." in transcript
+    assert "-> shaky. Back in 3 days." in transcript
+
+
+def test_an_empty_queue_says_whether_anything_is_scheduled_for_later() -> None:
+    nothing_at_all = ScriptedConsole([])
+    ReviewSession([], FakeRepository(), nothing_at_all, total_topics=0).run()
+    assert "Nothing to review yet" in nothing_at_all.transcript
+
+    nothing_due = ScriptedConsole([])
+    ReviewSession([], FakeRepository(), nothing_due, total_topics=6).run()
+    assert "Nothing due right now (6 topic(s) scheduled for later)" in nothing_due.transcript
+    assert "--all" in nothing_due.transcript

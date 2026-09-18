@@ -71,10 +71,17 @@ class TopicSource(BaseModel):
     pages: list[int]
 
 
+class ReviewEvent(BaseModel):
+    """One rating of one topic. The reviews table is an append-only log of
+    these, and everything about a topic's schedule is derived from it."""
+
+    rating: Rating
+    reviewed_at: datetime
+
+
 class StoredTopic(BaseModel):
-    """A topic as read back from the database, with its review history
-    summarised. This is what the review screen shows and what the queue is
-    ordered by."""
+    """A topic as read back from the database, with its full review history.
+    This is what the review screen shows and what the scheduler works from."""
 
     id: int
     title: str
@@ -83,10 +90,23 @@ class StoredTopic(BaseModel):
     tags: list[str]
     difficulty: Difficulty
     sources: list[TopicSource]
-    review_count: int = 0
-    last_rating: Rating | None = None
-    last_reviewed_at: datetime | None = None
+    reviews: list[ReviewEvent] = []  # oldest first
 
     @property
     def courses(self) -> list[str]:
         return list(dict.fromkeys(s.course for s in self.sources if s.course))
+
+    # The summary fields are derived rather than stored separately, so they
+    # can never disagree with the history they summarise.
+
+    @property
+    def review_count(self) -> int:
+        return len(self.reviews)
+
+    @property
+    def last_rating(self) -> Rating | None:
+        return self.reviews[-1].rating if self.reviews else None
+
+    @property
+    def last_reviewed_at(self) -> datetime | None:
+        return self.reviews[-1].reviewed_at if self.reviews else None

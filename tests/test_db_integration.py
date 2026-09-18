@@ -231,9 +231,13 @@ def test_list_topics_aggregates_sources_and_review_history(repo) -> None:
     assert stored.difficulty == Difficulty.CORE
     assert [(s.file_name, s.pages) for s in stored.sources] == [("week-1.pdf", [2]), ("week-5.pdf", [9, 10])]
     assert stored.courses == ["Networking"]
+    # The full history comes back oldest-first, which is what the scheduler
+    # replays; the summary properties are derived from it.
+    assert [e.rating for e in stored.reviews] == [Rating.FORGOTTEN, Rating.SHAKY]
+    assert stored.reviews[0].reviewed_at <= stored.reviews[1].reviewed_at
     assert stored.review_count == 2
     assert stored.last_rating == Rating.SHAKY
-    assert stored.last_reviewed_at is not None
+    assert stored.last_reviewed_at == stored.reviews[1].reviewed_at
 
 
 def test_list_topics_includes_never_reviewed_and_unlinked_topics(repo) -> None:
@@ -243,6 +247,7 @@ def test_list_topics_includes_never_reviewed_and_unlinked_topics(repo) -> None:
 
     assert stored.id == topic_id
     assert stored.sources == []
+    assert stored.reviews == []
     assert stored.review_count == 0
     assert stored.last_rating is None
 
