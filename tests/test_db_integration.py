@@ -263,3 +263,53 @@ def test_list_topics_can_be_filtered_by_course_case_insensitively(repo) -> None:
     assert [t.title for t in repo.list_topics(course="networking")] == ["TCP"]
     assert sorted(t.title for t in repo.list_topics()) == ["Indexes", "TCP"]
     assert repo.list_topics(course="History") == []
+
+
+# --- Phase 5: search ---------------------------------------------------------
+
+def test_find_similar_topics_returns_nearest_first_with_distances(repo) -> None:
+    source_id = repo.get_or_create_source("week-1.pdf", "Networking", "claude-sonnet-5", None)
+    close = repo.insert_topic(_topic("TCP three-way handshake"), _vector(1.0))
+    far = repo.insert_topic(_topic("UDP basics"), [0.0, 1.0] + [0.0] * 510)
+    unembedded = repo.insert_topic(_topic("Stored with no key"), None)
+    for tid in (close, far, unembedded):
+        repo.link_source(tid, source_id, [1])
+
+    # A query vector between the two, but closer to `close`.
+    results = repo.find_similar_topics([0.9, 0.1] + [0.0] * 510, limit=5)
+
+    assert [t.title for t, _ in results] == ["TCP three-way handshake", "UDP basics"]
+    assert results[0][1] < results[1][1]
+    assert results[0][0].sources[0].file_name == "week-1.pdf"  # full StoredTopic, not just an id
+
+
+def test_find_similar_topics_respects_limit_and_course(repo) -> None:
+    net = repo.get_or_create_source("net.pdf", "Networking", "claude-sonnet-5", None)
+    dbs = repo.get_or_create_source("db.pdf", "Databases", "claude-sonnet-5", None)
+    tcp = repo.insert_topic(_topic("TCP"), _vector(1.0))
+    idx = repo.insert_topic(_topic("Indexes"), _vector(0.99))
+    repo.link_source(tcp, net, [1])
+    repo.link_source(idx, dbs, [1])
+
+    assert len(repo.find_similar_topics(_vector(1.0), limit=1)) == 1
+    assert [t.title for t, _ in repo.find_similar_topics(_vector(1.0), limit=5, course="databases")] == ["Indexes"]
+
+
+def test_search_topics_by_text_matches_plain_english_and_ranks_titles_first(repo) -> None:
+    source_id = repo.get_or_create_source("week-1.pdf", "Networking", "claude-sonnet-5", None)
+    in_title = repo.insert_topic(Topic(
+        title="Congestion control", summary="How TCP avoids overwhelming the network.",
+        key_points=["slow start"], tags=["tcp"], difficulty=Difficulty.CORE, source_pages=[1]), None)
+    in_summary = repo.insert_topic(Topic(
+        title="Flow control", summary="Distinct from congestion control; protects the receiver.",
+        key_points=["receiver window"], tags=["tcp"], difficulty=Difficulty.CORE, source_pages=[2]), None)
+    unrelated = repo.insert_topic(_topic("UDP basics"), None)
+    for tid in (in_title, in_summary, unrelated):
+        repo.link_source(tid, source_id, [1])
+
+    results = repo.search_topics_by_text("how does congestion control work", limit=5)
+
+    # Stemming means 'congestion' matches, stop words are ignored, and the
+    # title match outranks the summary-only match.
+    assert [t.title for t in results] == ["Congestion control", "Flow control"]
+    assert repo.search_topics_by_text("quantum entanglement", limit=5) == []

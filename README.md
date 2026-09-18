@@ -4,9 +4,10 @@ An AI agent that reads your course slides, PDFs and notes, distills them into
 one-concept-per-note study topics, and (in later phases) quizzes you on the
 ones you're forgetting.
 
-> **Status:** Phase 4 of 5. Distill course material from the command line,
-> store topics in Postgres, and review them on a spaced-repetition schedule
-> driven by your own ratings. Q&A over your notes is on the [roadmap](#roadmap).
+> **Status:** Phase 5 in progress. Distill course material from the command
+> line, store topics in Postgres, review them on a spaced-repetition schedule
+> driven by your own ratings, and ask questions answered from your notes
+> alone. Practice questions are next on the [roadmap](#roadmap).
 
 ## Why
 
@@ -35,6 +36,8 @@ flowchart LR
     I --> K[schedule.py<br/>what's due?]
     K --> J[review.py<br/>recall, reveal, rate]
     J -- rating --> I
+    I -- nearest notes --> L[ask.py<br/>grounded answer]
+    L -- one Claude call --> L
     C -. every call .-> F[run_log.py<br/>JSONL run log]
 ```
 
@@ -166,6 +169,44 @@ Networking: 24 topic(s)
   reviews: 61 total, 4 today; streak 6 days
 ```
 
+### Asking questions (Phase 5)
+
+```bash
+python -m retrieve ask "how does slow start work?"
+python -m retrieve ask "what's the difference between flow and congestion control?" --course Networking
+```
+
+Retrieval-augmented generation over your own notes, in its simplest honest
+form. The question is embedded (Voyage's `query` input type, the partner of
+the `document` type the notes were stored with) and the nearest topics are
+pulled from the same pgvector index de-duplication uses. Those notes go to
+Claude with one firm rule: **answer only from these notes, cite them, and
+say plainly if they don't cover the question.**
+
+```
+Found 2 relevant note(s) by meaning:
+  [1] Flow control vs congestion control  distance 0.31
+  [2] TCP reliability mechanism  distance 0.47
+
+Slow start is part of congestion control: TCP starts slowly and backs off
+when it detects packet loss [1]. Your notes don't go into how the window
+grows during slow start.
+
+Sources:
+  [1] week-3-slides.pdf p.5
+  [2] week-3-slides.pdf p.4
+
+812 input / 61 output tokens, ~US$0.0014
+```
+
+That last sentence is the point. A general assistant would happily explain
+slow start's window doubling from its own knowledge; `ask` tells you your
+notes are thin there, which is what you need to know before an interview.
+Each question costs one Claude call (a cent or so) and, with a Voyage key,
+one embedding request. Without a Voyage key it falls back to Postgres
+full-text search, which finds notes that share words with the question but
+not ones phrased differently.
+
 ### De-duplication across sources (Phase 2, needs a Voyage key)
 
 Add `VOYAGE_API_KEY` (from [Voyage AI](https://dashboard.voyageai.com),
@@ -226,10 +267,11 @@ retrieve/
 ├── schedule.py    # spaced repetition: when is each topic due?
 ├── review.py      # the due queue + the recall/reveal/rate session
 ├── stats.py       # what's due, what's new, streak
+├── ask.py         # RAG: nearest notes -> one grounded Claude call
 ├── config.py      # settings from .env
 └── cli.py         # command-line interface
 migrations/        # SQL schema, applied by `python -m retrieve init-db`
-tests/             # 87 tests; all but the Postgres integration tests run
+tests/             # 100 tests; all but the Postgres integration tests run
                     # fully offline, without an API key
 examples/          # sample notes to try the agent on
 ```
@@ -284,6 +326,10 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
   what's due. No `due_at` column to keep in sync, no migration when the
   algorithm changes, and the whole history is there for a better policy
   later. At a few hundred topics the replay is instantaneous.
+- **`ask` may say "your notes don't cover this".** The prompt forbids
+  outside knowledge and requires citations, so an answer reflects what you
+  actually studied. Retrieval is one vector query; generation is one model
+  call, not an agent loop, because there's nothing to iterate on.
 - **Spaced repetition, not a fixed timetable.** A topic you keep getting
   right comes back less and less often; one you keep forgetting comes back
   tomorrow. That's what makes the review load stay small as the number of
@@ -305,8 +351,9 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 - [x] **Phase 2:** Postgres + pgvector storage (Neon), de-duplication across sources
 - [x] **Phase 3:** terminal review: recall from the title, reveal, rate it *solid / shaky / forgotten*
 - [x] **Phase 4:** spaced repetition (SM-2 style): ratings decide when each topic comes back; `stats`
-- [ ] **Phase 5:** Q&A over your own notes (RAG), generated practice questions,
-      interview-story practice from project write-ups
+- [x] **Phase 5a:** Q&A over your own notes (RAG) with citations
+- [ ] **Phase 5b:** generated practice questions, graded against the note
+- [ ] **Phase 5c:** interview-story practice from project write-ups
 - [ ] Evaluation set: hand-labelled slides to measure tagging accuracy
 
 ## Known limitations

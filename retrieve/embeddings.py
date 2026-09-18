@@ -83,3 +83,17 @@ def embed_topic(
 ) -> list[float]:
     """Embed a single topic. Prefer embed_topics for more than one."""
     return embed_topics([topic], client, model=model, dimensions=dimensions)[0]
+
+
+def embed_query(
+    question: str,
+    client: EmbeddingClient,
+    model: str = DEFAULT_EMBEDDING_MODEL,
+    dimensions: int = EMBEDDING_DIMENSIONS,
+) -> list[float]:
+    """Embed a search question. input_type='query' is the other half of
+    Voyage's asymmetric mode: notes are stored as 'document', questions are
+    embedded as 'query', and the model is trained so a short question lands
+    near the longer passage that answers it."""
+    result = client.embed([question], model=model, input_type="query", output_dimension=dimensions)
+    return list(result.embeddings[0])

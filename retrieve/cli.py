@@ -7,6 +7,7 @@ Usage:
     python -m retrieve review --course "Networking"   # what's due today
     python -m retrieve review --all                    # everything, e.g. before an interview
     python -m retrieve stats
+    python -m retrieve ask "how does slow start work?"   # answered from your notes
 """
 
 from __future__ import annotations
@@ -64,6 +65,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     stats = subcommands.add_parser("stats", help="What's due, what's new, and how reviewing is going.")
     stats.add_argument("--course", help="Only count topics from this course.")
+
+    ask = subcommands.add_parser("ask", help="Ask a question; the answer comes from your notes only.")
+    ask.add_argument("question", help="A plain-English question, in quotes.")
+    ask.add_argument("--course", help="Only search notes from this course.")
+    ask.add_argument("--top-k", type=int, default=5, help="How many notes to give the model (default 5).")
+    ask.add_argument("--model", help="Override the model set in .env.")
     return parser
 
 
@@ -81,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         return review_command(args, settings)
     if args.command == "stats":
         return stats_command(args, settings)
+    if args.command == "ask":
+        return ask_command(args, settings)
     return 1
 
 
@@ -196,6 +205,54 @@ def stats_command(args: argparse.Namespace, settings: Settings) -> int:
     with conn:
         topics = Repository(conn).list_topics(course=args.course)
     print(format_stats(compute_stats(topics), course=args.course))
+    return 0
+
+
+def ask_command(args: argparse.Namespace, settings: Settings) -> int:
+    if not settings.anthropic_api_key:
+        print("ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key.",
+              file=sys.stderr)
+        return 1
+    conn = _open_database(settings)
+    if conn is None:
+        return 1
+
+    import anthropic
+
+    from retrieve.ask import answer_question, format_answer, retrieve_topics
+    from retrieve.db import Repository
+
+    model = args.model or settings.model
+    embedder = _make_embedder(settings)
+    logger = RunLogger(settings.logs_dir, run_label="ask")
+
+    with conn:
+        repository = Repository(conn)
+        try:
+            retrieved, used_vector = retrieve_topics(
+                args.question, repository, embedder,
+                top_k=args.top_k, course=args.course,
+                embedding_model=settings.embedding_model,
+            )
+        except Exception as search_error:  # noqa: BLE001 - e.g. Voyage rate limit
+            print(f"Could not search your notes: {search_error}", file=sys.stderr)
+            return 1
+
+    if not retrieved:
+        scope = f" in course '{args.course}'" if args.course else ""
+        print(f"No notes{scope} match that question. "
+              "Try different wording, or `summarize` the material first.")
+        return 0
+
+    client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+    try:
+        answer = answer_question(args.question, retrieved, client.messages, model, logger,
+                                 used_vector_search=used_vector)
+    except anthropic.APIError as api_error:
+        print(f"Claude API error: {api_error}", file=sys.stderr)
+        return 1
+
+    print(format_answer(answer, logger.estimated_cost_usd(model)))
     return 0
 
 

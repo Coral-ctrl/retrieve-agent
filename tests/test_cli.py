@@ -111,10 +111,11 @@ def test_database_url_set_triggers_sync(monkeypatch, tmp_path, sample_pdf, capsy
 def test_database_commands_without_database_url_are_explained(monkeypatch, tmp_path, capsys) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")  # `ask` checks this first
     (tmp_path / "knowledge" / "x").mkdir(parents=True)
     (tmp_path / "knowledge" / "x" / "digest.json").write_text("{}")
 
-    for argv in (["init-db"], ["review"], ["import-knowledge"], ["stats"]):
+    for argv in (["init-db"], ["review"], ["import-knowledge"], ["stats"], ["ask", "q?"]):
         assert cli.main(argv) == 1
         assert "DATABASE_URL is not set" in capsys.readouterr().err
 
@@ -206,3 +207,70 @@ def test_stats_command_prints_a_summary_from_the_repository(monkeypatch, tmp_pat
     assert "due now: 0   new: 1   scheduled later: 1" in output
     assert "last rating: 1 solid" in output
     assert "1 today; streak 1 day" in output
+
+
+def test_ask_without_api_key_is_explained(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/fake")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    assert cli.main(["ask", "how does tcp connect?"]) == 1
+    assert "ANTHROPIC_API_KEY is not set" in capsys.readouterr().err
+
+
+def test_ask_answers_from_retrieved_notes(monkeypatch, tmp_path, capsys) -> None:
+    from retrieve.schema import Difficulty, StoredTopic, TopicSource
+    from tests.fakes import text_block
+
+    handshake = StoredTopic(
+        id=1, title="TCP three-way handshake", summary="TCP opens with SYN, SYN-ACK, ACK.",
+        key_points=["SYN"], tags=["tcp"], difficulty=Difficulty.CORE,
+        sources=[TopicSource(file_name="week-1.pdf", course="Networking", pages=[2])],
+    )
+
+    class StubRepository:
+        def find_similar_topics(self, embedding, limit, course=None):
+            raise AssertionError("no Voyage key configured, so vector search must not be used")
+
+        def search_topics_by_text(self, query, limit, course=None):
+            return [handshake]
+
+    fake_messages = FakeMessagesClient([
+        fake_response(text_block("SYN, then SYN-ACK, then ACK [1]."), stop_reason="end_turn"),
+    ])
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/fake")
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    monkeypatch.setattr(cli, "_open_database", lambda settings: _FakeConnection())
+    monkeypatch.setattr("retrieve.db.Repository", lambda conn: StubRepository())
+    monkeypatch.setattr(anthropic, "Anthropic", lambda api_key: SimpleNamespace(messages=fake_messages))
+
+    assert cli.main(["ask", "how does tcp connect?", "--model", "claude-haiku-4-5"]) == 0
+
+    output = capsys.readouterr().out
+    assert "by keyword (no VOYAGE_API_KEY)" in output
+    assert "[1] TCP three-way handshake" in output
+    assert "SYN, then SYN-ACK, then ACK [1]." in output
+    assert "[1] week-1.pdf p.2" in output
+    assert "~US$" in output
+    assert fake_messages.received_calls[0]["model"] == "claude-haiku-4-5"
+    assert list((tmp_path / "logs").glob("*-ask.jsonl"))
+
+
+def test_ask_with_no_matching_notes_says_so_without_calling_claude(monkeypatch, tmp_path, capsys) -> None:
+    class EmptyRepository:
+        def search_topics_by_text(self, query, limit, course=None):
+            return []
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/fake")
+    monkeypatch.delenv("VOYAGE_API_KEY", raising=False)
+    monkeypatch.setattr(cli, "_open_database", lambda settings: _FakeConnection())
+    monkeypatch.setattr("retrieve.db.Repository", lambda conn: EmptyRepository())
+    monkeypatch.setattr(anthropic, "Anthropic",
+                        lambda api_key: (_ for _ in ()).throw(AssertionError("must not call Claude")))
+
+    assert cli.main(["ask", "quantum entanglement", "--course", "Networking"]) == 0
+    assert "No notes in course 'Networking' match" in capsys.readouterr().out

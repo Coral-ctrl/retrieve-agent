@@ -209,8 +209,83 @@ class Repository:
         all (history included) and working in Python is simpler than paging
         and fast enough.
         """
+        return self._load_topics(
+            where="WHERE " + _COURSE_FILTER_SQL, params=(course, course), order="t.id"
+        )
+
+    def get_topics_by_ids(self, ids: list[int]) -> list[StoredTopic]:
+        if not ids:
+            return []
+        return self._load_topics(where="WHERE t.id = ANY(%s)", params=(ids,), order="t.id")
+
+    # --- search (Phase 5) ---------------------------------------------------
+
+    def find_similar_topics(
+        self, embedding: list[float], limit: int, course: str | None = None
+    ) -> list[tuple[StoredTopic, float]]:
+        """The `limit` topics nearest to a query vector, closest first, each
+        with its cosine distance. Topics stored without an embedding can't be
+        found this way (see search_topics_by_text)."""
         rows = self._conn.execute(
-            """
+            f"""
+            SELECT t.id, t.embedding <=> %s AS distance
+            FROM topics t
+            WHERE t.embedding IS NOT NULL AND ({_COURSE_FILTER_SQL})
+            ORDER BY t.embedding <=> %s
+            LIMIT %s
+            """,
+            (Vector(embedding), course, course, Vector(embedding), limit),
+        ).fetchall()
+        distance_by_id = {row[0]: float(row[1]) for row in rows}
+        topics = {t.id: t for t in self.get_topics_by_ids(list(distance_by_id))}
+        return [(topics[tid], distance_by_id[tid]) for tid in distance_by_id if tid in topics]
+
+    def search_topics_by_text(
+        self, query: str, limit: int, course: str | None = None
+    ) -> list[StoredTopic]:
+        """Postgres full-text search over title, summary and key points --
+        the fallback when there's no embedder.
+
+        The query is a question, so its words are OR-ed, not AND-ed: "how
+        does congestion control work" must still find a note titled
+        "Congestion control" even though it says nothing about "work".
+        plainto_tsquery strips stop words and stems ("congestion" ->
+        "congest"); swapping its & for | gives the OR. Ranking then puts
+        notes matching more of the words, and matching in the title, first.
+        """
+        rows = self._conn.execute(
+            f"""
+            WITH q AS (
+                SELECT replace(plainto_tsquery('english', %s)::text, '&', '|')::tsquery AS query
+            )
+            SELECT t.id,
+                   ts_rank(
+                       setweight(to_tsvector('english', t.title), 'A') ||
+                       setweight(to_tsvector('english', t.summary), 'B') ||
+                       setweight(to_tsvector('english', t.key_points::text), 'C'),
+                       q.query
+                   ) AS rank
+            FROM topics t, q
+            WHERE ({_COURSE_FILTER_SQL})
+              AND (
+                    to_tsvector('english', t.title) ||
+                    to_tsvector('english', t.summary) ||
+                    to_tsvector('english', t.key_points::text)
+                  ) @@ q.query
+            ORDER BY rank DESC, t.id
+            LIMIT %s
+            """,
+            (query, course, course, limit),
+        ).fetchall()
+        ordered_ids = [row[0] for row in rows]
+        topics = {t.id: t for t in self.get_topics_by_ids(ordered_ids)}
+        return [topics[tid] for tid in ordered_ids if tid in topics]
+
+    # --- shared row loading ---------------------------------------------------
+
+    def _load_topics(self, where: str, params: tuple, order: str) -> list[StoredTopic]:
+        rows = self._conn.execute(
+            f"""
             SELECT
                 t.id, t.title, t.summary, t.key_points, t.tags, t.difficulty,
                 COALESCE((
@@ -229,14 +304,10 @@ class Repository:
                     FROM reviews r WHERE r.topic_id = t.id
                 ), '[]') AS reviews
             FROM topics t
-            WHERE %s::text IS NULL
-               OR EXISTS (
-                    SELECT 1 FROM topic_sources ts2 JOIN sources s2 ON s2.id = ts2.source_id
-                    WHERE ts2.topic_id = t.id AND lower(s2.course) = lower(%s)
-               )
-            ORDER BY t.id
+            {where}
+            ORDER BY {order}
             """,
-            (course, course),
+            params,
         ).fetchall()
 
         return [
@@ -252,3 +323,12 @@ class Repository:
             )
             for row in rows
         ]
+
+
+# "No course given" or "linked to a source in this course (case-insensitive)".
+# Used with the course passed twice as parameters.
+_COURSE_FILTER_SQL = """%s::text IS NULL
+               OR EXISTS (
+                    SELECT 1 FROM topic_sources ts2 JOIN sources s2 ON s2.id = ts2.source_id
+                    WHERE ts2.topic_id = t.id AND lower(s2.course) = lower(%s)
+               )"""
