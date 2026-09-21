@@ -50,7 +50,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "name": "save_topic",
         "description": (
             "Save one distilled topic. One concept per topic. Write the summary "
-            "so a learner could explain the idea in an interview from it alone."
+            "so a learner could explain the idea in an interview from it alone. "
+            "Only for real course content (concepts, mechanisms, attacks, "
+            "defences, worked examples) -- never for administrative or "
+            "logistical slides (course codes, learning outcomes, agendas, "
+            "enrolment or supplementary-resource links, terminology notes)."
         ),
         "input_schema": {
             "type": "object",

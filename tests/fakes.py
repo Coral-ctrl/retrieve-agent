@@ -134,6 +134,48 @@ class FakeRepository:
     def source_count_for_topic(self, topic_id: int) -> int:
         return sum(1 for (tid, _sid) in self.topic_sources if tid == topic_id)
 
+    def list_sources(self):
+        from retrieve.db import SourceInfo
+
+        counts = {}
+        for (topic_id, source_id) in self.topic_sources:
+            counts[source_id] = counts.get(source_id, 0) + 1
+        return [
+            SourceInfo(id=sid, file_name=s["file_name"], course=s["course"],
+                      topic_count=counts.get(sid, 0))
+            for sid, s in sorted(self.sources.items())
+        ]
+
+    def delete_source(self, file_name: str, course):
+        from retrieve.db import DeleteSourceResult
+
+        source_id = next(
+            (sid for sid, s in self.sources.items()
+             if s["file_name"] == file_name and s["course"] == course),
+            None,
+        )
+        if source_id is None:
+            return None
+
+        topic_ids_here = [tid for (tid, sid) in self.topic_sources if sid == source_id]
+        self.sources.pop(source_id)
+        self.topic_sources = {
+            (tid, sid): pages for (tid, sid), pages in self.topic_sources.items()
+            if sid != source_id
+        }
+
+        still_linked = {tid for (tid, _sid) in self.topic_sources}
+        deleted_titles = []
+        for topic_id in topic_ids_here:
+            if topic_id not in still_linked:
+                deleted_titles.append(self.topics.pop(topic_id)["title"])
+
+        return DeleteSourceResult(
+            source_id=source_id,
+            topics_unlinked=len(topic_ids_here) - len(deleted_titles),
+            topics_deleted=deleted_titles,
+        )
+
 
 def _cosine_distance(a: list[float], b: list[float]) -> float:
     dot = sum(x * y for x, y in zip(a, b))

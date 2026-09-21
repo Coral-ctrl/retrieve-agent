@@ -192,6 +192,68 @@ def test_disable_voyage_skips_embeddings_even_with_a_key(monkeypatch, tmp_path, 
     assert "1 new, 0 merged" in output
 
 
+def _repository_with_two_sources():
+    """One topic unique to source A, one shared between A and B."""
+    from tests.fakes import FakeRepository
+
+    repository = FakeRepository()
+    source_a = repository.get_or_create_source("a.pptx", None, "claude-sonnet-5", None)
+    source_b = repository.get_or_create_source("b.pptx", None, "claude-sonnet-5", None)
+    only_in_a = repository.insert_topic(
+        SimpleNamespace(title="Course Agenda", tags=["logistics"]), None)
+    shared = repository.insert_topic(
+        SimpleNamespace(title="OSI Model", tags=["networking"]), None)
+    repository.link_source(only_in_a, source_a, [1])
+    repository.link_source(shared, source_a, [2])
+    repository.link_source(shared, source_b, [3])
+    return repository
+
+
+def test_remove_source_deletes_orphaned_topics_but_keeps_shared_ones(monkeypatch, tmp_path, capsys) -> None:
+    repository = _repository_with_two_sources()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/fake")
+    monkeypatch.setattr(cli, "_open_database", lambda settings: _FakeConnection())
+    monkeypatch.setattr("retrieve.db.Repository", lambda conn: repository)
+
+    assert cli.main(["remove-source", "a.pptx"]) == 0
+
+    output = capsys.readouterr().out
+    assert "Removed source 'a.pptx'" in output
+    assert "Deleted 1 topic(s)" in output
+    assert "Course Agenda" in output
+    assert "Kept 1 topic(s) also linked to another source" in output
+    # a.pptx and the orphaned topic are gone; the shared topic survives.
+    assert len(repository.sources) == 1
+    assert [t["title"] for t in repository.topics.values()] == ["OSI Model"]
+
+
+def test_remove_source_with_no_match_is_explained(monkeypatch, tmp_path, capsys) -> None:
+    repository = _repository_with_two_sources()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/fake")
+    monkeypatch.setattr(cli, "_open_database", lambda settings: _FakeConnection())
+    monkeypatch.setattr("retrieve.db.Repository", lambda conn: repository)
+
+    assert cli.main(["remove-source", "nope.pptx"]) == 1
+    assert "No source matches" in capsys.readouterr().err
+    assert len(repository.sources) == 2  # nothing touched
+
+
+def test_sources_command_lists_file_names_and_topic_counts(monkeypatch, tmp_path, capsys) -> None:
+    repository = _repository_with_two_sources()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/fake")
+    monkeypatch.setattr(cli, "_open_database", lambda settings: _FakeConnection())
+    monkeypatch.setattr("retrieve.db.Repository", lambda conn: repository)
+
+    assert cli.main(["sources"]) == 0
+
+    output = capsys.readouterr().out
+    assert "a.pptx" in output and "(2 topic(s))" in output
+    assert "b.pptx" in output and "(1 topic(s))" in output
+
+
 class _FakeConnection:
     """Enough of a psycopg connection for the CLI's `with conn:` blocks."""
 

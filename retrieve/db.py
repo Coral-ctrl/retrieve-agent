@@ -59,6 +59,21 @@ class NearestTopic:
     distance: float  # cosine distance: 0 = identical, 2 = opposite
 
 
+@dataclass
+class SourceInfo:
+    id: int
+    file_name: str
+    course: str | None
+    topic_count: int
+
+
+@dataclass
+class DeleteSourceResult:
+    source_id: int
+    topics_unlinked: int  # still exist -- shared with at least one other source
+    topics_deleted: list[str]  # titles removed outright: this was their only source
+
+
 class Repository:
     """One connection's worth of reads and writes against the schema above."""
 
@@ -102,6 +117,66 @@ class Repository:
             (file_name, course),
         ).fetchone()
         return row is not None
+
+    def list_sources(self) -> list[SourceInfo]:
+        """Every source that's been synced, with how many topics link to it
+        -- e.g. to find the exact file_name to pass to delete_source."""
+        rows = self._conn.execute(
+            """
+            SELECT s.id, s.file_name, s.course, count(ts.topic_id)
+            FROM sources s
+            LEFT JOIN topic_sources ts ON ts.source_id = s.id
+            GROUP BY s.id, s.file_name, s.course
+            ORDER BY s.file_name, s.course
+            """
+        ).fetchall()
+        return [SourceInfo(id=row[0], file_name=row[1], course=row[2], topic_count=row[3])
+                for row in rows]
+
+    def delete_source(self, file_name: str, course: str | None) -> DeleteSourceResult | None:
+        """Remove one source, e.g. to re-summarize a file from scratch after
+        changing the agent's prompt. Returns None if no such source exists.
+
+        A topic linked ONLY to this source is deleted outright (its reviews
+        go with it, via ON DELETE CASCADE); a topic also linked to another
+        source is kept, just unlinked from this one -- deleting a source
+        never removes knowledge that another file also taught."""
+        row = self._conn.execute(
+            "SELECT id FROM sources WHERE file_name = %s AND course IS NOT DISTINCT FROM %s",
+            (file_name, course),
+        ).fetchone()
+        if row is None:
+            return None
+        source_id = row[0]
+
+        topic_ids_here = [
+            r[0] for r in self._conn.execute(
+                "SELECT topic_id FROM topic_sources WHERE source_id = %s", (source_id,)
+            ).fetchall()
+        ]
+
+        # Cascades: removes this source's topic_sources rows too.
+        self._conn.execute("DELETE FROM sources WHERE id = %s", (source_id,))
+
+        deleted_titles: list[str] = []
+        if topic_ids_here:
+            deleted_titles = [
+                r[0] for r in self._conn.execute(
+                    """
+                    DELETE FROM topics
+                    WHERE id = ANY(%s)
+                      AND id NOT IN (SELECT DISTINCT topic_id FROM topic_sources)
+                    RETURNING title
+                    """,
+                    (topic_ids_here,),
+                ).fetchall()
+            ]
+
+        return DeleteSourceResult(
+            source_id=source_id,
+            topics_unlinked=len(topic_ids_here) - len(deleted_titles),
+            topics_deleted=deleted_titles,
+        )
 
     # --- topics -----------------------------------------------------------
 

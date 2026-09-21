@@ -7,6 +7,8 @@ Usage:
     python -m retrieve review --course "Networking"   # what's due today
     python -m retrieve review --all                    # everything, e.g. before an interview
     python -m retrieve stats
+    python -m retrieve sources                            # list synced files, for remove-source
+    python -m retrieve remove-source "week-1.pdf"          # clean slate before re-summarizing
     python -m retrieve ask "how does slow start work?"   # answered from your notes
     python -m retrieve serve                             # the same, in your browser
     python -m retrieve setup-token                       # sign in with a Claude subscription
@@ -67,6 +69,21 @@ def build_parser() -> argparse.ArgumentParser:
     stats = subcommands.add_parser("stats", help="What's due, what's new, and how reviewing is going.")
     stats.add_argument("--course", help="Only count topics from this course.")
 
+    subcommands.add_parser(
+        "sources",
+        help="List every source file that's been synced, with its exact file_name "
+             "(for remove-source) and how many topics it's linked to.",
+    )
+
+    remove_source = subcommands.add_parser(
+        "remove-source",
+        help="Delete a source and any topics that exist only because of it -- e.g. "
+             "to re-run summarize on the same file from a clean slate. Topics also "
+             "linked to another source are kept, just unlinked from this one.",
+    )
+    remove_source.add_argument("file_name", help="Exact file_name as shown by `sources`.")
+    remove_source.add_argument("--course", help="Only if the source was synced with a course.")
+
     ask = subcommands.add_parser("ask", help="Ask a question; the answer comes from your notes only.")
     ask.add_argument("question", help="A plain-English question, in quotes.")
     ask.add_argument("--course", help="Only search notes from this course.")
@@ -98,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
         return review_command(args, settings)
     if args.command == "stats":
         return stats_command(args, settings)
+    if args.command == "sources":
+        return sources_command(settings)
+    if args.command == "remove-source":
+        return remove_source_command(args, settings)
     if args.command == "ask":
         return ask_command(args, settings)
     if args.command == "serve":
@@ -253,6 +274,56 @@ def stats_command(args: argparse.Namespace, settings: Settings) -> int:
     with conn:
         topics = Repository(conn).list_topics(course=args.course)
     print(format_stats(compute_stats(topics), course=args.course))
+    return 0
+
+
+def sources_command(settings: Settings) -> int:
+    conn = _open_database(settings)
+    if conn is None:
+        return 1
+
+    from retrieve.db import Repository
+
+    with conn:
+        sources = Repository(conn).list_sources()
+
+    if not sources:
+        print("No sources synced yet.")
+        return 0
+
+    for source in sources:
+        course = f"  [{source.course}]" if source.course else ""
+        print(f"{source.file_name}{course}  ({source.topic_count} topic(s))")
+    return 0
+
+
+def remove_source_command(args: argparse.Namespace, settings: Settings) -> int:
+    conn = _open_database(settings)
+    if conn is None:
+        return 1
+
+    from retrieve.db import Repository
+
+    with conn:
+        repository = Repository(conn)
+        with repository.transaction():
+            result = repository.delete_source(args.file_name, args.course)
+
+    if result is None:
+        print(f"No source matches file_name={args.file_name!r} course={args.course!r}. "
+              "Run `python -m retrieve sources` to see exact names.", file=sys.stderr)
+        return 1
+
+    print(f"Removed source {args.file_name!r} (id {result.source_id}).")
+    if result.topics_deleted:
+        print(f"Deleted {len(result.topics_deleted)} topic(s) that only came from this source:")
+        for title in result.topics_deleted:
+            print(f"  - {title}")
+    if result.topics_unlinked:
+        print(f"Kept {result.topics_unlinked} topic(s) also linked to another source "
+              "(just unlinked from this one).")
+    print("\nThe knowledge/ folder on disk isn't touched by this command -- "
+          "delete that source's subfolder yourself if you want a fully clean slate.")
     return 0
 
 

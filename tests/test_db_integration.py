@@ -149,6 +149,29 @@ def test_init_db_works_on_a_fresh_database_without_the_extension() -> None:
         admin.close()
 
 
+def test_delete_source_removes_orphaned_topic_but_keeps_shared_one(repo) -> None:
+    source_a = repo.get_or_create_source("a.pptx", None, "claude-sonnet-5", None)
+    source_b = repo.get_or_create_source("b.pptx", None, "claude-sonnet-5", None)
+    only_in_a = repo.insert_topic(_topic("Course Agenda"), _vector(1.0))
+    shared = repo.insert_topic(_topic("OSI Model"), _vector(2.0))
+    repo.link_source(only_in_a, source_a, [1])
+    repo.link_source(shared, source_a, [2])
+    repo.link_source(shared, source_b, [3])
+
+    result = repo.delete_source("a.pptx", None)
+
+    assert result.topics_deleted == ["Course Agenda"]
+    assert result.topics_unlinked == 1
+    assert repo.source_exists("a.pptx", None) is False
+    assert repo.get_topics_by_ids([only_in_a]) == []
+    remaining = repo.get_topics_by_ids([shared])
+    assert len(remaining) == 1 and len(remaining[0].sources) == 1  # only b.pptx now
+
+
+def test_delete_source_with_no_match_returns_none(repo) -> None:
+    assert repo.delete_source("nope.pptx", None) is None
+
+
 def test_transaction_rolls_back_everything_on_failure(repo) -> None:
     """A database error part-way through a sync must not leave a source row
     with only some of its topics. Only real Postgres can prove the rollback."""

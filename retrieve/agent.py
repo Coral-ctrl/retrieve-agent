@@ -32,6 +32,14 @@ How to work:
 - After each range, save the distinct concepts you found with save_topic.
 - One concept per topic. Prefer specific titles ("TCP three-way handshake") \
 over broad ones ("Networking").
+- Save a topic only for something a learner would need to know or explain \
+in an interview: a concept, mechanism, protocol, attack, defence, or worked \
+example. Do NOT save a topic for administrative or logistical content -- \
+unit/course codes, learning outcomes or objectives, session agendas ("what \
+we'll cover today"), enrolment details, links to supplementary courses or \
+resources, spelling/terminology conventions, and similar housekeeping. \
+Read those pages (so finish doesn't complain they're unread), just don't \
+turn them into topics.
 - Summaries must be accurate to the source. Do not add facts the source \
 doesn't support; if the source is vague, say so in your finish note.
 - Keep the exact terms, steps and order the source uses in key_points, \
