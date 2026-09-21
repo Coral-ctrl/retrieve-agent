@@ -148,8 +148,10 @@ def _open_database(settings: Settings):
 
 
 def _make_embedder(settings: Settings):
-    """A Voyage client if a key is configured, else None (title-only dedup)."""
-    if not settings.voyage_api_key:
+    """A Voyage client if a key is configured and Voyage isn't disabled,
+    else None (title-only dedup, keyword search instead of vector search --
+    the same graceful path as having no key at all)."""
+    if settings.disable_voyage or not settings.voyage_api_key:
         return None
     import voyageai
 
@@ -158,6 +160,13 @@ def _make_embedder(settings: Settings):
     # with no payment method is capped at 3 requests/minute, which
     # import-knowledge over several files would otherwise trip over.
     return voyageai.Client(api_key=settings.voyage_api_key, max_retries=6)
+
+
+def _no_embedder_reason(settings: Settings) -> str:
+    """Why `_make_embedder` returned None, for the status lines below."""
+    if settings.disable_voyage:
+        return "RETRIEVE_DISABLE_VOYAGE is set"
+    return "No VOYAGE_API_KEY"
 
 
 def init_db_command(settings: Settings) -> int:
@@ -193,7 +202,8 @@ def import_knowledge_command(settings: Settings, force: bool = False) -> int:
 
     embedder = _make_embedder(settings)
     if embedder is None:
-        print("(No VOYAGE_API_KEY: topics are stored without embeddings and matched by title only.)\n")
+        print(f"({_no_embedder_reason(settings)}: topics are stored without embeddings "
+              "and matched by title only.)\n")
 
     imported = skipped = 0
     with conn:
@@ -425,7 +435,8 @@ def sync_to_database(digest: StudyDigest, settings: Settings) -> None:
 
     embedder = _make_embedder(settings)
     if embedder is None:
-        print("\n(No VOYAGE_API_KEY: topics stored without embeddings, de-duplication by title only.)")
+        print(f"\n({_no_embedder_reason(settings)}: topics stored without embeddings, "
+              "de-duplication by title only.)")
 
     try:
         with conn:

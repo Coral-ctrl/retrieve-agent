@@ -23,8 +23,8 @@ def settings(backend="subscription", api_key=None, token=None) -> Settings:
     return Settings(
         backend=backend, anthropic_api_key=api_key, claude_oauth_token=token,
         model="claude-sonnet-5", max_turns=5, knowledge_dir=Path("k"), logs_dir=Path("l"),
-        database_url=None, voyage_api_key=None, embedding_model="voyage-4-lite",
-        dedup_threshold=0.1,
+        database_url=None, voyage_api_key=None, disable_voyage=False,
+        embedding_model="voyage-4-lite", dedup_threshold=0.1,
     )
 
 

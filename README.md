@@ -299,6 +299,12 @@ back to exact title, which is enough to stop a re-run of the same file from
 doubling everything but won't catch the same idea worded differently. You
 can add the key later; only topics stored after that will have embeddings.
 
+Set `RETRIEVE_DISABLE_VOYAGE=true` to get that same no-key fallback while
+keeping `VOYAGE_API_KEY` in `.env` -- handy while developing, so repeated
+test runs don't spend the free-token allowance. It's a `.env` setting, not
+a git branch, so it doesn't move when you switch branches, merge, or stash;
+flip it back to `false` whenever you want real embeddings again.
+
 A Voyage account with no payment method is limited to 3 requests a minute.
 That's fine here: a whole file's topics are embedded in **one** request, and
 the client retries with backoff if `import-knowledge` over many files does

@@ -39,8 +39,18 @@ class Settings:
     logs_dir: Path  # where agent run logs are written
     database_url: str | None  # Postgres/Neon connection string; DB sync is skipped if unset
     voyage_api_key: str | None  # needed to embed topics for de-duplication
+    disable_voyage: bool  # true skips Voyage entirely, even if a key is set (see .env.example)
     embedding_model: str
     dedup_threshold: float  # cosine distance below which two topics are treated as one
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Parse an on/off environment variable. Accepts true/1/yes/on (any
+    case); anything else -- including unset -- is false (or `default`)."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"true", "1", "yes", "on"}
 
 
 def load_settings(project_root: Path | None = None) -> Settings:
@@ -64,6 +74,7 @@ def load_settings(project_root: Path | None = None) -> Settings:
         logs_dir=root / os.getenv("RETRIEVE_LOGS_DIR", "logs"),
         database_url=os.getenv("DATABASE_URL") or None,
         voyage_api_key=os.getenv("VOYAGE_API_KEY") or None,
+        disable_voyage=_env_flag("RETRIEVE_DISABLE_VOYAGE"),
         embedding_model=os.getenv("RETRIEVE_EMBEDDING_MODEL", "voyage-4-lite"),
         dedup_threshold=float(os.getenv("RETRIEVE_DEDUP_THRESHOLD", "0.10")),
     )

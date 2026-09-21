@@ -165,6 +165,33 @@ def test_import_knowledge_syncs_each_digest_once(monkeypatch, tmp_path, sample_p
     assert len(repository.sources) == 1
 
 
+def test_disable_voyage_skips_embeddings_even_with_a_key(monkeypatch, tmp_path, sample_pdf, capsys) -> None:
+    """RETRIEVE_DISABLE_VOYAGE=true must win over a configured VOYAGE_API_KEY:
+    no voyageai.Client is even constructed, so there's no way this setting
+    accidentally still calls out to Voyage."""
+    from tests.fakes import FakeRepository
+
+    monkeypatch.setattr(anthropic, "Anthropic",
+                        lambda api_key: SimpleNamespace(messages=_scripted_messages()))
+    assert run_cli(monkeypatch, tmp_path, ["summarize", str(sample_pdf), "--course", "Networking"]) == 0
+    capsys.readouterr()
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/fake")
+    monkeypatch.setenv("VOYAGE_API_KEY", "pa-test-key")
+    monkeypatch.setenv("RETRIEVE_DISABLE_VOYAGE", "true")
+    monkeypatch.setattr(cli, "_open_database", lambda settings: _FakeConnection())
+    monkeypatch.setattr("retrieve.db.Repository", lambda conn: FakeRepository())
+
+    import voyageai
+    monkeypatch.setattr(voyageai, "Client",
+                        lambda **kwargs: (_ for _ in ()).throw(AssertionError("Voyage must not be called")))
+
+    assert cli.main(["import-knowledge"]) == 0
+    output = capsys.readouterr().out
+    assert "RETRIEVE_DISABLE_VOYAGE is set" in output
+    assert "1 new, 0 merged" in output
+
+
 class _FakeConnection:
     """Enough of a psycopg connection for the CLI's `with conn:` blocks."""
 
