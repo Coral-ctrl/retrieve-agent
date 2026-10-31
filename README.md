@@ -1,6 +1,6 @@
 # Retrieve
 
-![CI](https://github.com/Coral-ctrl/retrieve-agent.git/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/Coral-ctrl/retrieve-agent/actions/workflows/ci.yml/badge.svg)
 
 An AI agent that reads your course slides, PDFs and notes, distills them into
 one-concept-per-note study topics, and schedules spaced-repetition review so
