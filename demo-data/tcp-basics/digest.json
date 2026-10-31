@@ -1,0 +1,121 @@
+{
+  "source_file": "tcp-basics.md",
+  "course": "Networking",
+  "model": "claude-haiku-4-5",
+  "created_at": "2026-09-17T11:48:23.358983Z",
+  "topics": [
+    {
+      "title": "TCP three-way handshake",
+      "summary": "TCP establishes connections through a three-step handshake before exchanging application data. The client sends SYN with an initial sequence number, the server responds with SYN-ACK including its own sequence number, and the client sends ACK to complete the connection.",
+      "key_points": [
+        "Client sends SYN segment with initial sequence number",
+        "Server replies with SYN-ACK, acknowledging client's sequence number and sending its own",
+        "Client sends ACK, and connection is established"
+      ],
+      "tags": [
+        "networking",
+        "tcp",
+        "connection-setup"
+      ],
+      "difficulty": "core",
+      "source_pages": [
+        1
+      ]
+    },
+    {
+      "title": "TCP reliability mechanism",
+      "summary": "TCP ensures reliable delivery by numbering every byte sent, with receivers acknowledging what they've received. The sender retransmits any unacknowledged data before a timeout expires, providing applications with an ordered, reliable byte stream.",
+      "key_points": [
+        "TCP numbers every byte it sends",
+        "Receiver acknowledges what it has received",
+        "Sender retransmits anything not acknowledged before timeout",
+        "Result is ordered, reliable byte stream"
+      ],
+      "tags": [
+        "networking",
+        "tcp",
+        "reliability"
+      ],
+      "difficulty": "core",
+      "source_pages": [
+        1
+      ]
+    },
+    {
+      "title": "Flow control vs congestion control",
+      "summary": "TCP uses two complementary mechanisms to prevent overwhelming: flow control prevents a fast sender from overwhelming a slow receiver through a window size advertisement, while congestion control prevents senders from overwhelming the network by starting slowly and backing off on packet loss detection.",
+      "key_points": [
+        "Flow control: receiver advertises window size telling sender how much it can accept",
+        "Congestion control: stops senders from overwhelming the network",
+        "TCP starts slowly (slow start) and backs off when packet loss is detected"
+      ],
+      "tags": [
+        "networking",
+        "tcp",
+        "flow-control",
+        "congestion"
+      ],
+      "difficulty": "core",
+      "source_pages": [
+        1
+      ]
+    },
+    {
+      "title": "TCP connection closure",
+      "summary": "Either side can initiate connection closure by sending a FIN segment, which the other side acknowledges. A complete two-way close typically requires four segments: FIN, ACK, FIN, ACK.",
+      "key_points": [
+        "Either side can close its half of the connection",
+        "Closing is initiated by sending FIN",
+        "Other side acknowledges with ACK",
+        "Full close usually takes four segments: FIN, ACK, FIN, ACK"
+      ],
+      "tags": [
+        "networking",
+        "tcp",
+        "connection-teardown"
+      ],
+      "difficulty": "core",
+      "source_pages": [
+        1
+      ]
+    },
+    {
+      "title": "TCP vs UDP comparison",
+      "summary": "UDP is a connectionless protocol without handshakes, acknowledgements, or retransmission, making it faster and simpler than TCP. UDP suits applications like streaming, gaming, and DNS lookups where speed is more critical than guaranteed delivery of every packet.",
+      "key_points": [
+        "UDP is connectionless with no handshake",
+        "UDP has no acknowledgements or retransmission",
+        "UDP is faster and simpler than TCP",
+        "UDP suits streaming, gaming, and DNS lookups where occasional packet loss matters less than delay"
+      ],
+      "tags": [
+        "networking",
+        "tcp",
+        "udp",
+        "protocol-comparison"
+      ],
+      "difficulty": "intro",
+      "source_pages": [
+        1
+      ]
+    },
+    {
+      "title": "TCP as connection-oriented transport protocol",
+      "summary": "TCP is a connection-oriented transport-layer protocol, meaning it requires both client and server to establish a connection before exchanging application data, distinguishing it from connectionless protocols like UDP.",
+      "key_points": [
+        "TCP is a connection-oriented transport-layer protocol",
+        "Client and server must establish connection before exchanging application data"
+      ],
+      "tags": [
+        "networking",
+        "tcp",
+        "protocol-basics"
+      ],
+      "difficulty": "intro",
+      "source_pages": [
+        1
+      ]
+    }
+  ],
+  "agent_note": "Document fully distilled. All major TCP concepts covered: connection establishment, reliability, flow/congestion control, connection closure, and TCP vs UDP comparison. The source material is clear and straightforward with no significant gaps or ambiguities."
+}

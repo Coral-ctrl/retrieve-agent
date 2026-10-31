@@ -4,6 +4,8 @@ An AI agent that reads your course slides, PDFs and notes, distills them into
 one-concept-per-note study topics, and (in later phases) quizzes you on the
 ones you're forgetting.
 
+![Retrieve demo dashboard](docs/demo-dashboard.png)
+
 > **Status:** Phase 5 in progress. Distill course material from the command
 > line, store topics in Postgres, review them on a spaced-repetition schedule
 > driven by your own ratings, and ask questions answered from your notes
@@ -83,15 +85,46 @@ pip install -r requirements-dev.txt
 cp .env.example .env               # then follow the comments in .env
 ```
 
+### Run with Docker
+
+The quickest way to try Retrieve, with nothing to install but
+[Docker](https://www.docker.com/products/docker-desktop/). Docker Compose
+starts the web app and a Postgres database with pgvector, in
+[demo mode](#demo-mode-for-a-public-copy): sample notes, no API keys,
+and no paid calls.
+
+```bash
+git clone https://github.com/Coral-ctrl/retrieve.git
+cd retrieve
+
+# Build the image and start the app and database in the background
+docker compose up -d --build
+
+# Create the tables, then load the sample TCP notes
+docker compose run --rm app python -m retrieve init-db
+docker compose run --rm -e RETRIEVE_KNOWLEDGE_DIR=demo-data app python -m retrieve import-knowledge
+```
+
+Then open http://localhost:8000. The dashboard, review and search all
+work; uploading and AI answers are switched off in demo mode.
+
+```bash
+docker compose down      # stop (the database is kept for next time)
+docker compose down -v   # stop and delete the database
+```
+
+The image runs as a non-root user, and `.env` is excluded by
+`.dockerignore`, so no keys or personal notes end up inside it.
+
 ### Subscription or API key?
 
 `summarize` and `ask` need Claude. There are two ways to pay for that, and
 `RETRIEVE_BACKEND` in `.env` picks one:
 
-| `RETRIEVE_BACKEND` | How it runs | What it costs |
-|---|---|---|
+| `RETRIEVE_BACKEND`       | How it runs                                                                                                                                                                                | What it costs                                                         |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
 | `subscription` (default) | The agent's tools are driven by the [Claude Agent SDK](https://support.claude.com/en/articles/15036540-use-the-claude-agent-sdk-with-your-claude-plan), signed in with your Claude account | Comes out of your Pro/Max plan's monthly credit; nothing extra to buy |
-| `api` | Phase 1's hand-written loop on the Anthropic API | Pay per token on an API key |
+| `api`                    | Phase 1's hand-written loop on the Anthropic API                                                                                                                                           | Pay per token on an API key                                           |
 
 **To use the subscription** (the default), sign in once:
 
@@ -156,7 +189,7 @@ python -m retrieve init-db
 ```
 
 From then on, every `summarize` run also stores its topics in the database,
-and any digests you produced *before* setting this up can be backfilled:
+and any digests you produced _before_ setting this up can be backfilled:
 
 ```bash
 python -m retrieve import-knowledge
@@ -191,10 +224,10 @@ How did you do? [s/h/f, k=skip, q=quit]: s
 
 **When a topic comes back is decided by spaced repetition** (`schedule.py`,
 an adaptation of the SM-2 algorithm behind Anki): each time you rate a
-topic *solid* the gap before its next review grows -- 1 day, 3 days, then
-multiplied by a per-topic *ease* factor -- so well-known material fades
-into the background. *Shaky* repeats the current gap and lowers ease a
-little; *forgotten* drops the gap back to 1 day and lowers ease more. The
+topic _solid_ the gap before its next review grows -- 1 day, 3 days, then
+multiplied by a per-topic _ease_ factor -- so well-known material fades
+into the background. _Shaky_ repeats the current gap and lowers ease a
+little; _forgotten_ drops the gap back to 1 day and lowers ease more. The
 `review` queue shows what's due (most overdue first), then new topics --
 the same order Anki uses, because a fading memory is more urgent than a
 fresh one.
@@ -383,9 +416,13 @@ retrieve/
     ├── templates/ #   Jinja2, server-rendered
     └── static/    #   one stylesheet
 migrations/        # SQL schema, applied by `python -m retrieve init-db`
-tests/             # 143 tests; all but the Postgres integration tests run
+tests/             # 157 tests; all but the Postgres integration tests run
                     # fully offline, without an API key or a sign-in
 examples/          # sample notes to try the agent on
+demo-data/         # sample digest loaded into the Docker demo
+Dockerfile         # the app image: Python 3.13, non-root user
+docker-compose.yml # app + Postgres/pgvector, in demo mode
+.dockerignore      # keeps .env, .venv and personal notes out of the image
 ```
 
 ## Testing
@@ -474,7 +511,7 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 
 - [x] **Phase 1:** distillation agent (CLI), structured topics, run logging, tests
 - [x] **Phase 2:** Postgres + pgvector storage (Neon), de-duplication across sources
-- [x] **Phase 3:** terminal review: recall from the title, reveal, rate it *solid / shaky / forgotten*
+- [x] **Phase 3:** terminal review: recall from the title, reveal, rate it _solid / shaky / forgotten_
 - [x] **Phase 4:** spaced repetition (SM-2 style): ratings decide when each topic comes back; `stats`
 - [x] **Phase 5a:** Q&A over your own notes (RAG) with citations
 - [x] **Web app:** dashboard, review, ask and new-material pages (`serve`)
@@ -494,6 +531,6 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 ## Acknowledgements
 
 The note structure (one concept per note, metadata in frontmatter, distill
-before saving, keep an agent log) was inspired by the *Knowledge Agent
-Workshop* run by Make AI Practical in Melbourne. This project is an
+before saving, keep an agent log) was inspired by the _Knowledge Agent
+Workshop_ run by Make AI Practical in Melbourne. This project is an
 independent implementation.

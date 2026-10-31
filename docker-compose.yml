@@ -1,0 +1,31 @@
+services:
+  db:
+    # Official Postgres 17 image with the pgvector extension already installed.
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: retrieve
+      POSTGRES_PASSWORD: retrieve # fine for a local demo; never reuse a real password here
+      POSTGRES_DB: retrieve
+    volumes:
+      - db_data:/var/lib/postgresql/data # keeps the data when the container is removed
+    healthcheck:
+      # "Is Postgres ready to accept connections?" Checked every few seconds.
+      test: ["CMD-SHELL", "pg_isready -U retrieve"]
+      interval: 3s
+      retries: 10
+
+  app:
+    build: . # build from your Dockerfile
+    ports:
+      - "8000:8000" # your Mac's port 8000 -> the container's port 8000
+    environment:
+      # "db" is the service name above: containers in the same compose file
+      # find each other by service name, like a hostname.
+      DATABASE_URL: postgresql://retrieve:retrieve@db:5432/retrieve
+      RETRIEVE_DEMO_MODE: "true"
+    depends_on:
+      db:
+        condition: service_healthy # don't start the app until Postgres is ready
+
+volumes:
+  db_data:
