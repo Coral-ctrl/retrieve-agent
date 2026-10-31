@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from retrieve.agent import run_agent
 from retrieve.schema import Difficulty, Rating, ReviewEvent, StoredTopic, TopicSource
-from retrieve.web.app import WebDeps, create_app
+from retrieve.web.app import DEMO_ASK_NOTE, WebDeps, create_app
 from tests.fakes import FakeMessagesClient, fake_response, text_block, tool_use_block
 
 NOW = datetime(2026, 9, 18, 12, 0, tzinfo=timezone.utc)
@@ -100,7 +100,7 @@ class WebFakeRepository:
         return 1
 
 
-def make_client(topics, messages_client=None, tmp_path=None, database_available=True):
+def make_client(topics, messages_client=None, tmp_path=None, database_available=True, demo_mode=False):
     repo = WebFakeRepository(topics)
 
     @contextmanager
@@ -115,7 +115,7 @@ def make_client(topics, messages_client=None, tmp_path=None, database_available=
         agent_runner=agent_runner,
         model="claude-haiku-4-5", embedding_model="voyage-4-lite",
         logs_dir=tmp_path, knowledge_dir=tmp_path, max_turns=10, dedup_threshold=0.10,
-        database_available=database_available, now=lambda: NOW,
+        database_available=database_available, demo_mode=demo_mode, now=lambda: NOW,
     ))
     return TestClient(app), repo
 
@@ -347,3 +347,63 @@ def test_ask_shows_a_claude_error_instead_of_crashing(tmp_path) -> None:
     page = client.post("/ask", data={"question": "how does congestion control work", "course": ""}).text
 
     assert "Claude error: Usage limit reached" in page
+
+
+# --- demo mode ------------------------------------------------------------------
+# The promise demo mode makes is "a visitor can't trigger a paid call". Each
+# test passes in a Claude client with NO scripted responses: if anything
+# reached it, it would raise and the test would fail, not just assert later.
+
+def test_demo_banner_shows_only_in_demo_mode(tmp_path) -> None:
+    demo, _ = make_client([_topic(1, "Congestion control")], tmp_path=tmp_path, demo_mode=True)
+    normal, _ = make_client([_topic(1, "Congestion control")], tmp_path=tmp_path)
+
+    assert "sample notes only" in demo.get("/").text
+    assert "sample notes only" not in normal.get("/").text
+
+
+def test_demo_ask_shows_matching_notes_without_calling_claude(tmp_path) -> None:
+    messages = FakeMessagesClient([])  # any model call would raise
+    client, _ = make_client([_topic(1, "Congestion control")], messages_client=messages,
+                            tmp_path=tmp_path, demo_mode=True)
+
+    # The form stays usable, unlike when Claude is simply unreachable.
+    assert "Claude isn't reachable" not in client.get("/ask").text
+
+    page = client.post("/ask", data={"question": "how does congestion control work", "course": ""}).text
+
+    assert DEMO_ASK_NOTE in page
+    assert "Congestion control" in page and "Summary of Congestion control." in page
+    assert "~US$" not in page and "output tokens" not in page  # nothing was spent
+    assert messages.received_calls == []
+
+
+def test_demo_ask_with_no_matching_notes_says_so(tmp_path) -> None:
+    client, _ = make_client([_topic(1, "Congestion control")], tmp_path=tmp_path, demo_mode=True)
+
+    page = client.post("/ask", data={"question": "photosynthesis", "course": ""}).text
+
+    assert "No notes in the demo match that question." in page
+
+
+def test_demo_refuses_uploads_without_reading_them(tmp_path) -> None:
+    messages = FakeMessagesClient([])
+    client, repo = make_client([], messages_client=messages, tmp_path=tmp_path, demo_mode=True)
+
+    page = client.get("/new").text
+    assert "switched off in this demo" in page and "disabled" in page
+
+    response = client.post("/new", data={"course": ""}, files=_upload_file())
+    assert response.status_code == 403
+    assert "switched off in this demo" in response.text
+    assert repo._synced == [] and messages.received_calls == []
+    assert list(tmp_path.iterdir()) == []  # no notes or run logs written
+
+
+def test_demo_review_still_records_ratings(tmp_path) -> None:
+    client, repo = make_client([_topic(1, "First")], tmp_path=tmp_path, demo_mode=True)
+
+    response = client.post("/review/1/rate", data={"rating": "solid", "course": ""}, follow_redirects=False)
+
+    assert response.status_code == 303
+    assert repo.recorded == [(1, Rating.SOLID)]

@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 # Default model for summarising and tagging. Sonnet is a good balance of
 # quality and cost for this job; switch to Haiku in .env to save money.
 DEFAULT_MODEL = "claude-sonnet-5"
-DEFAULT_MAX_TURNS = 20
+DEFAULT_MAX_TURNS = 50
 
 
 # Which way to reach Claude. "subscription" runs the agent through the
@@ -42,6 +42,10 @@ class Settings:
     disable_voyage: bool  # true skips Voyage entirely, even if a key is set (see .env.example)
     embedding_model: str
     dedup_threshold: float  # cosine distance below which two topics are treated as one
+    # True for a public demo deployment: `serve` builds no Claude or Voyage
+    # client at all, so visitors can browse and review but never trigger a
+    # paid call. Point DATABASE_URL at a separate demo database alongside it.
+    demo_mode: bool = False
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -77,4 +81,5 @@ def load_settings(project_root: Path | None = None) -> Settings:
         disable_voyage=_env_flag("RETRIEVE_DISABLE_VOYAGE"),
         embedding_model=os.getenv("RETRIEVE_EMBEDDING_MODEL", "voyage-4-lite"),
         dedup_threshold=float(os.getenv("RETRIEVE_DEDUP_THRESHOLD", "0.10")),
+        demo_mode=_env_flag("RETRIEVE_DEMO_MODE"),
     )

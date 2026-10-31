@@ -231,6 +231,43 @@ CLI already uses, so there is no study logic in the web layer and the two
 interfaces can't drift apart. It runs on localhost for one person, so
 there's no login. The terminal commands keep working alongside it.
 
+#### Demo mode (for a public copy)
+
+Retrieve is built for one person on localhost, so a copy on the public
+internet needs different rules: no login, but also no way for a visitor to
+spend money or see private notes. Rather than bolting on accounts, demo mode
+removes what makes a public copy risky:
+
+```bash
+# on the server, with DATABASE_URL pointing at a separate demo database
+RETRIEVE_DEMO_MODE=true python -m retrieve serve --host 0.0.0.0 --no-browser
+```
+
+- **No paid calls.** `serve` builds no Claude or Voyage client, and
+  `create_app` drops any it's given, so no route has anything to call --
+  enforced in one place rather than checked page by page.
+- **Ask still works, minus the answer.** It runs the same retrieval step
+  (Postgres keyword search, which is free) and shows the matching notes in
+  place of Claude's answer.
+- **New material is off.** Uploads are refused with a 403 before the file
+  is read.
+- **Separate data.** Point `DATABASE_URL` at a demo database (a Neon
+  branch works well) and fill it with sample notes only. Your real notes
+  stay where they are. From your own machine, without re-summarizing:
+
+  ```bash
+  mkdir -p demo-knowledge && cp -r knowledge/tcp-basics demo-knowledge/
+  export DATABASE_URL="<demo database connection string>"
+  python -m retrieve init-db
+  RETRIEVE_KNOWLEDGE_DIR=demo-knowledge python -m retrieve import-knowledge
+  ```
+
+  Variables set in the shell win over `.env`, so in that terminal these
+  commands use the demo database, not your everyday one. Open a new
+  terminal afterwards to get back to normal.
+
+A banner on every page tells visitors what they're looking at.
+
 ### Asking questions (Phase 5)
 
 ```bash
@@ -442,6 +479,7 @@ psql retrieve_test -c 'CREATE EXTENSION IF NOT EXISTS vector;'
 - [x] **Phase 5a:** Q&A over your own notes (RAG) with citations
 - [x] **Web app:** dashboard, review, ask and new-material pages (`serve`)
 - [x] **Subscription backend:** run on a Claude Pro/Max plan, API key as the fallback
+- [x] **Demo mode:** a public copy with sample data and no paid calls (`RETRIEVE_DEMO_MODE`)
 - [ ] **Phase 5b:** generated practice questions, graded against the note
 - [ ] **Phase 5c:** interview-story practice from project write-ups
 - [ ] Evaluation set: hand-labelled slides to measure tagging accuracy

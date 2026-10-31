@@ -10,7 +10,9 @@
     Supported: {{ suffixes }}. This can take a minute or two for a longer file.
   </p>
 
-  {% if not can_summarize %}
+  {% if demo_mode %}
+  <p class="warn">Uploading is switched off in this demo. In the full app, Claude reads the file here, splits it into one-concept study topics and merges them with notes you already have.</p>
+  {% elif not can_summarize %}
   <p class="warn">Claude isn't reachable, so material can't be summarized. Sign in with <code>claude</code> (subscription) or add ANTHROPIC_API_KEY to <code>.env</code>, then restart <code>serve</code>. Uploading is disabled.</p>
   {% endif %}
 

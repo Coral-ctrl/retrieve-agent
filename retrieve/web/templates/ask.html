@@ -28,7 +28,7 @@
   {% if answer.retrieved %}
   <p class="muted small">
     Found {{ answer.retrieved|length }} relevant note{{ "" if answer.retrieved|length == 1 else "s" }}
-    {{ "by meaning" if answer.used_vector_search else "by keyword (no VOYAGE_API_KEY)" }}
+    {{ "by meaning" if answer.used_vector_search else ("by keyword" if demo_mode else "by keyword (no VOYAGE_API_KEY)") }}
   </p>
   {% endif %}
 
@@ -44,12 +44,16 @@
       <div class="muted small">
         {% for s in item.topic.sources %}{{ s.file_name }} p.{{ s.pages|join(", ") }}{% if not loop.last %}; {% endif %}{% endfor %}
       </div>
+      {# With no generated answer in the demo, the note itself is the useful part. #}
+      {% if demo_mode %}<p class="small">{{ item.topic.summary }}</p>{% endif %}
     </li>
     {% endfor %}
   </ol>
+  {% if not demo_mode %}
   <p class="muted small">
     {{ answer.input_tokens }} input / {{ answer.output_tokens }} output tokens{% if cost is not none %}, ~US${{ "%.4f"|format(cost) }}{% endif %}
   </p>
+  {% endif %}
   {% endif %}
 </section>
 {% endif %}

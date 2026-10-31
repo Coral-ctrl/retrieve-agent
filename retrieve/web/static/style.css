@@ -674,3 +674,23 @@ table.topics {
     padding-bottom: 14px;
   }
 }
+
+/* --- demo banner (RETRIEVE_DEMO_MODE): a yellow sticker under the header --- */
+.demo-banner {
+  max-width: 980px;
+  box-sizing: border-box;
+  /* Pull main's generous top padding in, so the banner sits close to the content. */
+  margin: 28px auto -48px;
+  padding: 12px 20px;
+  border: var(--border) solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--yellow);
+  box-shadow: var(--shadow-hard);
+  font-size: 0.88rem;
+  text-align: center;
+}
+@media (max-width: 720px) {
+  .demo-banner {
+    margin: 20px var(--gutter) -48px;
+  }
+}

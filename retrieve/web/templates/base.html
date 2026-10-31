@@ -29,6 +29,13 @@
     {# Bottom-left status line; each page fills it in (dashboard: due count + streak). #}
     <div class="top-status">{% block header_status %}{% endblock %}</div>
   </header>
+  {% if demo_mode %}
+  {# Says up front what a visitor is looking at, so a disabled page reads as a design choice, not a bug. #}
+  <p class="demo-banner" role="note">
+    <strong>Demo</strong> &middot; sample notes only &middot; reviewing works;
+    uploading and AI answers are switched off so this public copy makes no paid calls.
+  </p>
+  {% endif %}
   <main class="{% block main_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>

@@ -397,3 +397,31 @@ def test_summarize_on_the_subscription_backend_uses_the_sdk_runner(monkeypatch, 
     assert seen == {"model": "claude-sonnet-5", "source": "networking-week-1.pdf", "course": "Networking",
                     "token": "sk-ant-oat01-test", "pages": 2}
     assert (tmp_path / "knowledge" / "networking-week-1" / "digest.json").exists()
+
+
+def test_serve_in_demo_mode_never_builds_claude_or_voyage_clients(monkeypatch, tmp_path, capsys) -> None:
+    """Even with an API key and a Voyage key in the environment, a demo
+    server must not create the clients that would spend them."""
+    import uvicorn
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example/demo")  # never connected: no request is made
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("VOYAGE_API_KEY", "pa-test-key")
+    monkeypatch.setenv("RETRIEVE_DEMO_MODE", "true")
+
+    def must_not_be_called(*args, **kwargs):
+        raise AssertionError("demo mode built a paid client")
+
+    monkeypatch.setattr(cli, "make_backend", must_not_be_called)
+    monkeypatch.setattr(cli, "_make_embedder", must_not_be_called)
+    started = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kwargs: started.update(kwargs))
+
+    exit_code = cli.main(["serve", "--no-browser", "--host", "0.0.0.0", "--port", "9000"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert started["host"] == "0.0.0.0" and started["port"] == 9000
+    assert "Demo mode" in output
+    assert "http://127.0.0.1:9000" in output  # 0.0.0.0 shown as an address a browser can open

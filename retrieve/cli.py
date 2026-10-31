@@ -97,6 +97,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve = subcommands.add_parser("serve", help="Open the dashboard, review and ask pages in your browser.")
     serve.add_argument("--port", type=int, default=8000)
+    # 127.0.0.1 = only this computer can open it. A server or container
+    # needs 0.0.0.0 so requests from outside reach the app.
+    serve.add_argument("--host", default="127.0.0.1",
+                       help="Address to listen on. Use 0.0.0.0 when deploying (e.g. in Docker).")
     serve.add_argument("--no-browser", action="store_true", help="Don't open a browser tab automatically.")
     return parser
 
@@ -397,15 +401,23 @@ def serve_command(args: argparse.Namespace, settings: Settings) -> int:
         finally:
             conn.close()
 
-    backend = make_backend(settings, notify=_notice)
-    if backend is None:
-        print("(The Ask and New material pages will be disabled.)")
+    if settings.demo_mode:
+        # Don't even build a backend: a demo server never reads the Claude
+        # token or API key, so it doesn't matter what's in its environment.
+        backend = None
+        embedder = None
+        print("Demo mode: no Claude or Voyage calls. Uploads are off; Ask shows matching notes only.")
     else:
-        print(f"Claude via {backend.describe}")
+        backend = make_backend(settings, notify=_notice)
+        embedder = _make_embedder(settings)
+        if backend is None:
+            print("(The Ask and New material pages will be disabled.)")
+        else:
+            print(f"Claude via {backend.describe}")
 
     app = create_app(WebDeps(
         open_repository=open_repository,
-        embedder=_make_embedder(settings),
+        embedder=embedder,
         messages_client=backend.messages_client if backend else None,
         agent_runner=backend.agent_runner if backend else None,
         model=settings.model,
@@ -414,13 +426,16 @@ def serve_command(args: argparse.Namespace, settings: Settings) -> int:
         knowledge_dir=settings.knowledge_dir,
         max_turns=settings.max_turns,
         dedup_threshold=settings.dedup_threshold,
+        demo_mode=settings.demo_mode,
     ))
 
-    url = f"http://127.0.0.1:{args.port}"
+    # 0.0.0.0 isn't an address a browser can open, so show localhost instead.
+    shown_host = "127.0.0.1" if args.host == "0.0.0.0" else args.host
+    url = f"http://{shown_host}:{args.port}"
     print(f"Retrieve is running at {url}  (Ctrl+C to stop)")
     if not args.no_browser:
         threading.Timer(0.8, lambda: webbrowser.open(url)).start()
-    uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="warning")
+    uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
     return 0
 
 

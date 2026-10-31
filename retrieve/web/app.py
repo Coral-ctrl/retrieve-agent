@@ -23,6 +23,15 @@ interactivity a recall-and-rate loop needs.
 It's a single-user app on localhost, so there's no auth and no session
 state -- every request goes to the database, the one source of truth.
 
+Demo mode (RETRIEVE_DEMO_MODE=true) is for putting the app on the public
+internet for interviewers to try. Rather than adding a login, it removes
+what makes a public copy risky: create_app drops the Claude and Voyage
+clients before any route can see them, so New material is switched off and
+Ask shows the notes it found (free keyword search) without the paid answer
+step. Dashboard and review work as normal against whatever DATABASE_URL
+points at -- which, for a demo, should be a separate database holding
+sample notes only.
+
 The app is built by a factory that takes its dependencies, so tests can
 pass a fake repository and a scripted Claude client, exactly as the CLI
 tests do. The real wiring (Neon, Voyage, Anthropic) happens in cli.py's
@@ -31,7 +40,7 @@ tests do. The real wiring (Neon, Voyage, Anthropic) happens in cli.py's
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -43,7 +52,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from retrieve.ask import answer_question, retrieve_topics
+from retrieve.ask import Answer, answer_question, retrieve_topics
 from retrieve.extract import SUPPORTED_SUFFIXES, UnsupportedFileError
 from retrieve.review import RATING_KEYS, describe_due, order_for_review
 from retrieve.run_log import RunLogger
@@ -72,16 +81,36 @@ class WebDeps:
     max_turns: int
     dedup_threshold: float
     database_available: bool = True  # False mirrors "DATABASE_URL not set" in the CLI
+    demo_mode: bool = False  # public demo: no paid calls, whatever clients are passed in
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc)
 
 
+# Shown where the full app would call Claude. Kept here, not in a template,
+# so the tests can check the exact wording the page promises.
+DEMO_ASK_NOTE = (
+    "This is the demo, so the answer step is switched off. In the full app, "
+    "Claude now writes an answer using only the notes below, citing them as [1], [2]..."
+)
+
+
 def create_app(deps: WebDeps) -> FastAPI:
+    if deps.demo_mode:
+        # The guarantee demo mode makes ("no paid calls") is enforced here,
+        # in one place, rather than by every route remembering to check:
+        # with the clients gone, there is nothing a request could call.
+        # The embedder goes too, so Ask uses Postgres keyword search.
+        deps = replace(deps, messages_client=None, agent_runner=None, embedder=None)
+
     app = FastAPI(title="Retrieve")
     app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
     templates = Jinja2Templates(directory=WEB_DIR / "templates")
 
-    def render(request: Request, name: str, **context: Any) -> HTMLResponse:
-        return templates.TemplateResponse(request, name, {"request": request, **context})
+    def render(request: Request, name: str, status_code: int = 200, **context: Any) -> HTMLResponse:
+        # demo_mode goes to every template so base.html can show the banner.
+        return templates.TemplateResponse(
+            request, name, {"request": request, "demo_mode": deps.demo_mode, **context},
+            status_code=status_code,
+        )
 
     # --- dashboard --------------------------------------------------------
 
@@ -158,11 +187,24 @@ def create_app(deps: WebDeps) -> FastAPI:
 
     @app.get("/ask", response_class=HTMLResponse)
     def ask_page(request: Request, course: str | None = None):
+        # In the demo the form stays usable: searching the notes is free.
         return render(request, "ask.html", course=course or "", answer=None,
-                      can_answer=deps.messages_client is not None)
+                      can_answer=deps.demo_mode or deps.messages_client is not None)
 
     @app.post("/ask", response_class=HTMLResponse)
     def ask_submit(request: Request, question: str = Form(...), course: str = Form("")):
+        if deps.demo_mode:
+            # Retrieval only: the same search the real Ask runs first (keyword,
+            # since the embedder was removed above), then the matched notes
+            # are shown in place of Claude's answer.
+            with deps.open_repository() as repo:
+                retrieved, used_vector = retrieve_topics(question, repo, None, course=course or None)
+            text = DEMO_ASK_NOTE if retrieved else "No notes in the demo match that question."
+            answer = Answer(question=question, text=text, retrieved=retrieved,
+                            used_vector_search=used_vector)
+            return render(request, "ask.html", course=course, question=question, answer=answer,
+                          can_answer=True, cost=None)
+
         if deps.messages_client is None:
             return render(request, "ask.html", course=course, answer=None, can_answer=False,
                           question=question)
@@ -193,6 +235,11 @@ def create_app(deps: WebDeps) -> FastAPI:
 
     @app.post("/new", response_class=HTMLResponse)
     def new_submit(request: Request, file: UploadFile, course: str = Form("")):
+        if deps.demo_mode:
+            # Refuse before reading the upload: in the demo, nothing a visitor
+            # sends is processed or stored. 403 = understood, but not allowed here.
+            return render(request, "new.html", status_code=403, can_summarize=False,
+                          suffixes=", ".join(sorted(SUPPORTED_SUFFIXES)))
         if deps.agent_runner is None:
             return render(request, "new.html", can_summarize=False,
                           suffixes=", ".join(sorted(SUPPORTED_SUFFIXES)))
