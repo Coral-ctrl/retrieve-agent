@@ -118,6 +118,8 @@ docker compose down -v   # stop and delete the database
 The image runs as a non-root user, and `.env` is excluded by
 `.dockerignore`, so no keys or personal notes end up inside it.
 
+The image is scanned with Docker Scout; the two remaining High findings (glibc, zlib) are in Debian base packages with no upstream fix yet, and are picked up on rebuild once patched.
+
 ### Subscription or API key?
 
 `summarize` and `ask` need Claude. There are two ways to pay for that, and

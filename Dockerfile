@@ -13,7 +13,11 @@ WORKDIR /app
 # Docker caches each step: if requirements.txt hasn't changed, the next build
 # skips this slow install even when your code has changed.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install the app's dependencies, then remove pip itself: the running app
+# never needs it, and pip carries its own bundled copies of msgpack, urllib3
+# and setuptools, which the image scan flagged.
+RUN pip install --no-cache-dir -r requirements.txt \
+    && pip uninstall -y pip
 
 # Create the non-root user first, so the copy below can hand it ownership.
 RUN useradd --create-home appuser
