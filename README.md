@@ -1,8 +1,10 @@
 # Retrieve
 
+![CI](https://github.com/Coral-ctrl/retrieve-agent.git/actions/workflows/ci.yml/badge.svg)
+
 An AI agent that reads your course slides, PDFs and notes, distills them into
-one-concept-per-note study topics, and (in later phases) quizzes you on the
-ones you're forgetting.
+one-concept-per-note study topics, and schedules spaced-repetition review so
+you practise the ones you're forgetting.
 
 ![Retrieve demo dashboard](docs/demo-dashboard.png)
 
@@ -69,7 +71,7 @@ version: a Claude Pro/Max subscription is enough, and an
 [Anthropic API key](https://platform.claude.com) is the optional backup.
 
 ```bash
-git clone https://github.com/<your-username>/retrieve.git
+git clone https://github.com/Coral-ctrl/retrieve-agent.git
 cd retrieve
 
 # Using uv (recommended)
@@ -94,7 +96,7 @@ starts the web app and a Postgres database with pgvector, in
 and no paid calls.
 
 ```bash
-git clone https://github.com/Coral-ctrl/retrieve.git
+git clone https://github.com/Coral-ctrl/retrieve-agent.git
 cd retrieve
 
 # Build the image and start the app and database in the background
