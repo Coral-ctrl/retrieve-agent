@@ -6,6 +6,10 @@ An AI agent that reads your course slides, PDFs and notes, distills them into
 one-concept-per-note study topics, and schedules spaced-repetition review so
 you practise the ones you're forgetting.
 
+**[Try the live demo](https://retrieve-agent.onrender.com)**: sample notes only,
+no sign-up. It's on free hosting, so the first load after a quiet period can
+take up to a minute.
+
 ![Retrieve demo dashboard](docs/demo-dashboard.png)
 
 > **Status:** Phase 5 in progress. Distill course material from the command
@@ -288,15 +292,17 @@ RETRIEVE_DEMO_MODE=true python -m retrieve serve --host 0.0.0.0 --no-browser
   place of Claude's answer.
 - **New material is off.** Uploads are refused with a 403 before the file
   is read.
-- **Separate data.** Point `DATABASE_URL` at a demo database (a Neon
-  branch works well) and fill it with sample notes only. Your real notes
-  stay where they are. From your own machine, without re-summarizing:
+- **Separate data.** Point `DATABASE_URL` at a separate, empty database
+  (in Neon, a new database in the same project) and fill it with the
+  sample notes in `demo-data/` only. Don't use a Neon branch of your real
+  database: a branch starts as a copy of its parent's data, so your
+  private notes would be in the public demo. From your own machine:
 
   ```bash
-  mkdir -p demo-knowledge && cp -r knowledge/tcp-basics demo-knowledge/
   export DATABASE_URL="<demo database connection string>"
+  export RETRIEVE_DISABLE_VOYAGE=true   # demo mode doesn't use embeddings
   python -m retrieve init-db
-  RETRIEVE_KNOWLEDGE_DIR=demo-knowledge python -m retrieve import-knowledge
+  RETRIEVE_KNOWLEDGE_DIR=demo-data python -m retrieve import-knowledge
   ```
 
   Variables set in the shell win over `.env`, so in that terminal these
@@ -304,6 +310,10 @@ RETRIEVE_DEMO_MODE=true python -m retrieve serve --host 0.0.0.0 --no-browser
   terminal afterwards to get back to normal.
 
 A banner on every page tells visitors what they're looking at.
+
+The [live demo](https://retrieve-agent.onrender.com) runs this way on
+Render's free tier, built from the same `Dockerfile`, with a separate
+Neon database and no API keys on the server.
 
 ### Asking questions (Phase 5)
 
